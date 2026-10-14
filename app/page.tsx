@@ -1,11 +1,19 @@
-'use client';import {useEffect,useState} from 'react';import type {Briefing,Task} from '../lib/types';
-const short=(s:string)=>new Date(s).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',timeZone:'America/Los_Angeles'});
-export default function Home(){const [brief,setBrief]=useState<Briefing|null>(null);const [error,setError]=useState('');const [loading,setLoading]=useState(true);const [minutes,setMinutes]=useState(10);const [energy,setEnergy]=useState('Low');const [context,setContext]=useState('Anywhere');const [selection,setSelection]=useState<Task|null>(null);
-async function reload(){setLoading(true);try{const r=await fetch('/api/briefing',{cache:'no-store'});const b=await r.json();if(!r.ok)throw Error(b.error||'Request failed');setBrief(b);setError('')}catch(e){setError(String(e))}finally{setLoading(false)}}
-useEffect(()=>{reload()},[]);
-function selectAction(){const t=brief?.tasks.filter(t=>!['Done','Canceled','Waiting','Blocked','Waiting for User'].includes(t.status)&&t.duration<=minutes&&(context==='Anywhere'||t.context==='Anywhere'||t.context===context)&&({Low:0,Medium:1,High:2}[t.energy as 'Low'|'Medium'|'High']??1)<=({Low:0,Medium:1,High:2}[energy as 'Low'|'Medium'|'High']??0)).sort((a,b)=>(b.priority==='High'?2:1)-(a.priority==='High'?2:1))[0];setSelection(t||null)}
-return <main><header><div className="brand">✦ <strong>Deevaa OS</strong><span>Personal AI workforce</span></div><button onClick={reload} disabled={loading}>{loading?'Loading…':'↻ Refresh state'}</button></header><section className="hero"><p className="eyebrow">YOUR LIFE, INTELLIGENTLY COORDINATED</p><h1>Your day, without the mental overhead.</h1><p>Observe → Prioritize → Prepare → Review → Act with your approval.</p>{brief&&<div className="status"><b>{brief.mode}</b> · {brief.date} · {brief.timezone}</div>}</section>
-{error&&<section className="warning">{error}</section>}
-{brief&&<><section className="notice"><b>Connected sources:</b> Notion: {brief.sourceStatus.notion} · Google Calendar: {brief.sourceStatus.calendar}{brief.sourceStatus.warnings.map((w,i)=><p key={i}>⚠ {w}</p>)}</section>
-<div className="columns"><section className="panel"><h2>Today's four blocks</h2><p className="muted">Suggestions only; no appointments or tasks are automatically changed.</p>{brief.blocks.map(b=><div className="block" key={b.label}><span>{b.label}</span><div><strong>{b.task?.title||'Leave open intentionally'}</strong><p>{b.reason}</p></div></div>)}</section><section className="panel"><h2>Live calendar</h2>{brief.events.length?brief.events.map(e=><div className="event" key={e.id}><span>{short(e.start)} – {short(e.end)}</span><strong>{e.title}</strong></div>):<p className="muted">No calendar events loaded. Until Google is connected, this app cannot infer your free time.</p>}<h2 className="space">Find my next action</h2><div className="fields"><label>Minutes<select value={minutes} onChange={e=>setMinutes(Number(e.target.value))}>{[5,10,20,45,60].map(x=><option key={x}>{x}</option>)}</select></label><label>Energy<select value={energy} onChange={e=>setEnergy(e.target.value)}>{['Low','Medium','High'].map(x=><option key={x}>{x}</option>)}</select></label><label>Setting<select value={context} onChange={e=>setContext(e.target.value)}>{['Anywhere','Phone','Laptop','Home'].map(x=><option key={x}>{x}</option>)}</select></label></div><button className="cta" onClick={selectAction}>Choose one useful action →</button>{selection?<div className="selected"><b>{selection.title}</b><p>Definition of done: advance this single task within {minutes} minutes. Verify before marking complete.</p></div>:<p className="muted">{selection===null?'No action selected. If nothing fits, leave the window free.':''}</p>}</section></div>
-<section className="panel"><h2>Action queue <small>{brief.tasks.length} items</small></h2>{brief.tasks.map(t=><div key={t.id} className="task"><div><strong>{t.title}</strong><small>{t.status} · {t.priority} · {t.duration}m · {t.source}</small></div>{t.url&&<a href={t.url} target="_blank" rel="noreferrer">Open in Notion ↗</a>}</div>)}</section><footer>Prototype v0.1 · Data is not persisted by this app · No external writes or background automation enabled</footer></>}</main>}
+import {redirect} from 'next/navigation';
+import {auth, signOut} from '@/auth';
+import Dashboard from './dashboard';
+
+export const dynamic = 'force-dynamic';
+
+export default async function Home() {
+  const session = await auth();
+  if (!session?.user?.email) redirect('/login');
+  return (
+    <Dashboard
+      email={session.user.email}
+      signOutAction={async () => {
+        'use server';
+        await signOut({redirectTo: '/login'});
+      }}
+    />
+  );
+}
