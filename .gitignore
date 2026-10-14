@@ -4,3 +4,4 @@ node_modules
 !.env.example
 *.tsbuildinfo
 .data
+life-blueprint-import.md

@@ -146,4 +146,21 @@ CREATE TABLE IF NOT EXISTS action_feedback (
 CREATE INDEX IF NOT EXISTS action_feedback_user_created ON action_feedback(user_id, created_at DESC);
 `;
 
-export const MIGRATIONS = [MIGRATION_0001, MIGRATION_0002];
+export const MIGRATION_0003 = `
+CREATE TABLE IF NOT EXISTS blueprint_imports (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  source_name text NOT NULL,
+  content_sha256 text NOT NULL,
+  preview_sha256 text NOT NULL,
+  preview jsonb NOT NULL,
+  status text NOT NULL DEFAULT 'preview',
+  apply_report jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  applied_at timestamptz
+);
+CREATE UNIQUE INDEX IF NOT EXISTS blueprint_imports_user_content ON blueprint_imports(user_id, content_sha256);
+CREATE INDEX IF NOT EXISTS blueprint_imports_user_created ON blueprint_imports(user_id, created_at DESC);
+`;
+
+export const MIGRATIONS = [MIGRATION_0001, MIGRATION_0002, MIGRATION_0003];

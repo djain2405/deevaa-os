@@ -148,6 +148,23 @@ export const blueprintSuggestions = pgTable('blueprint_suggestions', {
   updatedAt: timestamp('updated_at', {withTimezone: true}).notNull().defaultNow()
 });
 
+export const blueprintImports = pgTable(
+  'blueprint_imports',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').notNull().references(() => users.id, {onDelete: 'cascade'}),
+    sourceName: text('source_name').notNull(),
+    contentSha256: text('content_sha256').notNull(),
+    previewSha256: text('preview_sha256').notNull(),
+    preview: jsonb('preview').notNull(),
+    status: text('status').$type<'preview' | 'applied' | 'canceled'>().notNull().default('preview'),
+    applyReport: jsonb('apply_report').$type<Record<string, unknown> | null>(),
+    createdAt: timestamp('created_at', {withTimezone: true}).notNull().defaultNow(),
+    appliedAt: timestamp('applied_at', {withTimezone: true})
+  },
+  (t) => [uniqueIndex('blueprint_imports_user_content').on(t.userId, t.contentSha256)]
+);
+
 export const actionFeedback = pgTable('action_feedback', {
   id: uuid('id').primaryKey().defaultRandom(),
   userId: uuid('user_id').notNull().references(() => users.id, {onDelete: 'cascade'}),

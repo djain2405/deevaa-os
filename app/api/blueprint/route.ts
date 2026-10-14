@@ -1,5 +1,6 @@
 import {Blueprint, emptyBlueprint, parseBlueprint, SUGGESTION_FIELD} from '@/lib/blueprint';
 import {apiError, forbiddenOrigin, isSameOrigin, privateJson, unauthorized} from '@/lib/http';
+import {wipeBlueprintData} from '@/lib/import-store';
 import {latestBlueprint, listSuggestions, resolveSuggestion, saveBlueprint} from '@/lib/intake-store';
 import {getSessionUser} from '@/lib/session';
 import {audit} from '@/lib/store';
@@ -52,11 +53,21 @@ export async function POST(req: Request) {
     const text = typeof body.text === 'string' && body.text.trim() ? body.text.trim().slice(0, 240) : pending.text.slice(0, 240);
     const current = await latestBlueprint(user.id);
     const data = current ? parseBlueprint(current.data) : emptyBlueprint();
-    const field = SUGGESTION_FIELD[pending.kind] ?? 'context';
+    const field = pending.kind === 'boundary' ? 'boundaries' : SUGGESTION_FIELD[pending.kind] ?? 'context';
     if (!data[field].includes(text)) data[field] = [...data[field], text].slice(-30);
     if (!(await saveBlueprint(user.id, data, current?.version ?? 0))) return apiError(409, 'stale', 'The Blueprint changed. Try again.');
   }
   await resolveSuggestion(user.id, id, body.action === 'confirm' ? 'confirmed' : 'dismissed');
   await audit(user.id, 'blueprint.suggestion', 'ok', {action: body.action, kind: pending.kind});
   return privateJson(await view(user.id));
+}
+
+/** Deletes Blueprint versions, pending suggestions, and import previews. Notion tasks are unchanged. */
+export async function DELETE(req: Request) {
+  if (!isSameOrigin(req)) return forbiddenOrigin();
+  const user = await getSessionUser();
+  if (!user) return unauthorized();
+  await wipeBlueprintData(user.id);
+  await audit(user.id, 'blueprint.wipe', 'ok');
+  return privateJson({deleted: true});
 }

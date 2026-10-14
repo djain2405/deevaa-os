@@ -41,6 +41,10 @@ Limits: 30 messages per hour, 4,000 characters per message.
 
 ## Life Blueprint and next-action feedback
 
+### One-time Blueprint import
+
+In **Life Blueprint → Import Life Blueprint**, paste or upload your `life-blueprint-import.md` export (keep this file local; it is gitignored). Deevaa builds a **preview only** until you click **Approve import**. The preview shows Blueprint lines by section, Notion tasks (active, waiting, done, ideas), skipped items, and uncertain dates. Approval saves a new Blueprint version, writes tasks through the same verified Notion path as chat, and refreshes the briefing. Re-importing the same document (same content hash) returns the prior result without duplicating records. Export metadata (no raw seed file): `GET /api/blueprint/export`. Wipe Blueprint data only: `DELETE /api/blueprint` (Notion tasks stay).
+
 The **Life Blueprint** panel holds versioned, editable context: goals, quarterly priorities, active and paused projects, routines, preferences, recurring commitments, scheduling constraints, energy patterns, boundaries, experiments, lessons and general context. Saving creates a new version; a stale tab cannot overwrite a newer save.
 
 Only confirmed Blueprint entries influence ranking, and every effect is shown as a reason: supporting a quarterly priority (+25), an active project (+12) or a goal (+10), or belonging to a paused project (−15). Matching uses the task title and the Notion `Project` field.

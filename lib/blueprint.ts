@@ -45,6 +45,7 @@ export const SUGGESTION_FIELD: Record<string, BlueprintField> = {
   goal: 'goals',
   preference: 'preferences',
   personal_context: 'context',
+  boundary: 'boundaries',
   reflection: 'lessons',
   capacity: 'energy',
   project: 'activeProjects',

@@ -197,7 +197,15 @@ async function storeNotes(userId: string, messageId: string, items: ExtractedIte
     : await addSuggestions(
         userId,
         messageId,
-        items.filter((i) => SUGGESTION_KIND[i.kind]).map((i) => ({kind: SUGGESTION_KIND[i.kind]!, text: i.due ? `${i.title} (${i.due})` : i.title}))
+        items
+          .filter((i) => SUGGESTION_KIND[i.kind] || i.kind === 'personal_context')
+          .map((i) => {
+            const boundary = i.kind === 'personal_context' && /\b(confidential|privacy|never|approval|permission|boundary)\b/i.test(i.evidence);
+            const kind = boundary ? 'boundary' : SUGGESTION_KIND[i.kind]!;
+            const text = i.due ? `${i.title} (${i.due})` : i.title;
+            return {kind, text};
+          })
+          .filter((x) => x.kind)
       );
   return rows.map((r) => ({id: r.id, kind: r.kind, text: r.text}));
 }

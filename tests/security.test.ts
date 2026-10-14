@@ -10,6 +10,10 @@ import {GET as cronGet, POST as cronPost} from '@/app/api/cron/route';
 import {POST as chatApply} from '@/app/api/chat/apply/route';
 import {DELETE as chatDelete, GET as chatGet, POST as chatPost} from '@/app/api/chat/route';
 import {POST as chatUndo} from '@/app/api/chat/undo/route';
+import {DELETE as blueprintDelete, GET as blueprintGet, PUT as blueprintPut} from '@/app/api/blueprint/route';
+import {POST as importApply} from '@/app/api/blueprint/import/apply/route';
+import {POST as importPreview} from '@/app/api/blueprint/import/route';
+import {GET as blueprintExport} from '@/app/api/blueprint/export/route';
 import {GET as permissionsGet, POST as permissionsPost} from '@/app/api/permissions/route';
 import {GET as callback} from '@/app/api/google/callback/route';
 import {POST as connect} from '@/app/api/google/connect/route';
@@ -42,7 +46,13 @@ describe('unauthorized access', () => {
       chatApply(new Request(`${BASE}/api/chat/apply`, {method: 'POST', headers: sameOrigin, body: '{}'})),
       chatUndo(new Request(`${BASE}/api/chat/undo`, {method: 'POST', headers: sameOrigin, body: '{}'})),
       permissionsGet(),
-      permissionsPost(new Request(`${BASE}/api/permissions`, {method: 'POST', headers: sameOrigin, body: '{}'}))
+      permissionsPost(new Request(`${BASE}/api/permissions`, {method: 'POST', headers: sameOrigin, body: '{}'})),
+      blueprintGet(),
+      blueprintPut(new Request(`${BASE}/api/blueprint`, {method: 'PUT', headers: sameOrigin, body: '{}'})),
+      blueprintDelete(new Request(`${BASE}/api/blueprint`, {method: 'DELETE', headers: sameOrigin})),
+      blueprintExport(),
+      importPreview(new Request(`${BASE}/api/blueprint/import`, {method: 'POST', headers: sameOrigin, body: '{"markdown":"x"}'})),
+      importApply(new Request(`${BASE}/api/blueprint/import/apply`, {method: 'POST', headers: sameOrigin, body: '{}'}))
     ]);
     for (const res of responses) {
       expect(res.status).toBe(401);
@@ -66,7 +76,10 @@ describe('unauthorized access', () => {
       chatUndo(new Request(`${BASE}/api/chat/undo`, {method: 'POST', headers: evil, body: '{}'})),
       chatApply(new Request(`${BASE}/api/chat/apply`, {method: 'POST', headers: evil, body: '{}'})),
       chatDelete(new Request(`${BASE}/api/chat`, {method: 'DELETE', headers: evil})),
-      permissionsPost(new Request(`${BASE}/api/permissions`, {method: 'POST', headers: evil, body: JSON.stringify({permission: 'notion_task_write', status: 'granted'})}))
+      permissionsPost(new Request(`${BASE}/api/permissions`, {method: 'POST', headers: evil, body: JSON.stringify({permission: 'notion_task_write', status: 'granted'})})),
+      importPreview(new Request(`${BASE}/api/blueprint/import`, {method: 'POST', headers: evil, body: '{"markdown":"short"}'})),
+      importApply(new Request(`${BASE}/api/blueprint/import/apply`, {method: 'POST', headers: evil, body: '{}'})),
+      blueprintDelete(new Request(`${BASE}/api/blueprint`, {method: 'DELETE', headers: evil}))
     ])) {
       expect(res.status).toBe(403);
     }
