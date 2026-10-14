@@ -3,6 +3,7 @@ import {integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid}
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
   email: text('email').notNull().unique(),
+  blueprintNotionPageId: text('blueprint_notion_page_id'),
   createdAt: timestamp('created_at', {withTimezone: true}).notNull().defaultNow()
 });
 

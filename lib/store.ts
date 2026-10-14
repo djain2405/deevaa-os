@@ -202,3 +202,14 @@ export async function countBriefings(userId: string, localDate: string) {
     .where(and(eq(briefings.userId, userId), eq(briefings.localDate, localDate)));
   return Number(row?.n ?? 0);
 }
+
+export async function getBlueprintNotionPageId(userId: string) {
+  const db = await getDb();
+  const [row] = await db.select({pageId: users.blueprintNotionPageId}).from(users).where(eq(users.id, userId));
+  return row?.pageId ?? null;
+}
+
+export async function setBlueprintNotionPageId(userId: string, pageId: string) {
+  const db = await getDb();
+  await db.update(users).set({blueprintNotionPageId: pageId}).where(eq(users.id, userId));
+}

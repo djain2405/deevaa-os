@@ -4,7 +4,16 @@ import {useCallback, useEffect, useState} from 'react';
 import {BLUEPRINT_FIELDS, type Blueprint, type BlueprintField} from '@/lib/blueprint';
 import type {ImportPreview, ImportTask} from '@/lib/blueprint-import';
 
-type View = {version: number; updatedAt: string | null; data: Blueprint; suggestions: {id: string; kind: string; text: string; createdAt: string}[]};
+type BlueprintNotion = {status: 'published' | 'skipped' | 'failed'; url: string | null; message: string};
+
+type View = {
+  version: number;
+  updatedAt: string | null;
+  data: Blueprint;
+  suggestions: {id: string; kind: string; text: string; createdAt: string}[];
+  notionPageUrl: string | null;
+  notion?: BlueprintNotion;
+};
 
 type PreviewResponse = {
   id: string;
@@ -50,7 +59,11 @@ export function BlueprintPanel({onSaved}: {onSaved: () => void}) {
       setLoadError('Could not load your Life Blueprint. Try refreshing the page.');
       return;
     }
-    const body: View = await res.json();
+    const body = (await res.json().catch(() => null)) as View | null;
+    if (!body) {
+      setLoadError('Could not load your Life Blueprint. Try refreshing the page.');
+      return;
+    }
     setView(body);
     setDraft(toText(body.data));
     const hasContent = BLUEPRINT_FIELDS.some((f) => body.data[f.key].length > 0);
@@ -73,7 +86,8 @@ export function BlueprintPanel({onSaved}: {onSaved: () => void}) {
     if (!res.ok) return setMessage(body?.error?.message ?? 'Could not save.');
     setView(body);
     setDraft(toText(body.data));
-    setMessage(`Blueprint saved as version ${body.version}. (Each save increases the version number; that is normal.) The briefing is refreshing.`);
+    const notionNote = body.notion?.message ? ` ${body.notion.message}` : '';
+    setMessage(`Blueprint saved as version ${body.version}. (Each save increases the version number; that is normal.) The briefing is refreshing.${notionNote}`);
     setEditing(false);
     onSaved();
   }
@@ -132,7 +146,8 @@ export function BlueprintPanel({onSaved}: {onSaved: () => void}) {
     if (!res.ok) return setMessage(body?.error?.message ?? 'Import could not be applied.');
     setImportPreview(null);
     setPasteMd('');
-    setMessage(body.message ?? 'Import applied.');
+    const notionNote = body.notion?.message ? ` ${body.notion.message}` : '';
+    setMessage((body.message ?? 'Import applied.') + notionNote);
     await load();
     onSaved();
   }
@@ -159,8 +174,14 @@ export function BlueprintPanel({onSaved}: {onSaved: () => void}) {
     <section className="panel blueprint" aria-labelledby="blueprint-title">
       <h2 id="blueprint-title">Life Blueprint</h2>
       <p className="muted">
-        Only what you confirm here shapes your priorities. This is saved on this device, not in Notion.{' '}
+        Only what you confirm here shapes your priorities. Ranking uses this copy on this device.{' '}
         {view.version ? `Version ${view.version} · ${filled} section${filled === 1 ? '' : 's'} filled.` : 'Empty for now.'}
+        {view.notionPageUrl && (
+          <>
+            {' '}
+            <a href={view.notionPageUrl} target="_blank" rel="noopener noreferrer">Open in Notion</a>
+          </>
+        )}
       </p>
 
       {message && <p className="notice" role="status">{message}</p>}

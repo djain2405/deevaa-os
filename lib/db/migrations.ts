@@ -163,4 +163,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS blueprint_imports_user_content ON blueprint_im
 CREATE INDEX IF NOT EXISTS blueprint_imports_user_created ON blueprint_imports(user_id, created_at DESC);
 `;
 
-export const MIGRATIONS = [MIGRATION_0001, MIGRATION_0002, MIGRATION_0003];
+export const MIGRATION_0004 = `
+ALTER TABLE users ADD COLUMN IF NOT EXISTS blueprint_notion_page_id text;
+`;
+
+export const MIGRATIONS = [MIGRATION_0001, MIGRATION_0002, MIGRATION_0003, MIGRATION_0004];

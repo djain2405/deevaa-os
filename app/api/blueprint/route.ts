@@ -3,18 +3,27 @@ import {apiError, forbiddenOrigin, isSameOrigin, privateJson, unauthorized} from
 import {wipeBlueprintData} from '@/lib/import-store';
 import {latestBlueprint, listSuggestions, resolveSuggestion, saveBlueprint} from '@/lib/intake-store';
 import {getSessionUser} from '@/lib/session';
-import {audit} from '@/lib/store';
+import {notionPagePublicUrl, publishLifeBlueprintToNotion} from '@/lib/notion-blueprint';
+import {logEvent} from '@/lib/log';
+import {audit, getBlueprintNotionPageId} from '@/lib/store';
 
 export const dynamic = 'force-dynamic';
 
 async function view(userId: string) {
   const row = await latestBlueprint(userId);
   const suggestions = await listSuggestions(userId);
+  let notionPageId: string | null = null;
+  try {
+    notionPageId = await getBlueprintNotionPageId(userId);
+  } catch (e) {
+    logEvent('warn', 'blueprint.view.notion_page', {kind: e instanceof Error ? e.name : 'unknown'});
+  }
   return {
     version: row?.version ?? 0,
     updatedAt: row?.createdAt.toISOString() ?? null,
     data: row ? parseBlueprint(row.data) : emptyBlueprint(),
-    suggestions: suggestions.map((s) => ({id: s.id, kind: s.kind, text: s.text, createdAt: s.createdAt.toISOString()}))
+    suggestions: suggestions.map((s) => ({id: s.id, kind: s.kind, text: s.text, createdAt: s.createdAt.toISOString()})),
+    notionPageUrl: notionPageId ? notionPagePublicUrl(notionPageId) : null
   };
 }
 
@@ -36,7 +45,23 @@ export async function PUT(req: Request) {
   const row = await saveBlueprint(user.id, parsed.data, body.version);
   if (!row) return apiError(409, 'stale', 'The Blueprint changed since you opened it. Reload and try again.');
   await audit(user.id, 'blueprint.save', 'ok', {version: row.version});
-  return privateJson(await view(user.id));
+  let notion = await publishLifeBlueprintToNotion(user.id, parsed.data).catch((e) => {
+    logEvent('error', 'blueprint.publish', {kind: e instanceof Error ? e.name : 'unknown'});
+    return {status: 'failed' as const, url: null, message: 'Could not publish Life Blueprint to Notion.'};
+  });
+  try {
+    return privateJson({...(await view(user.id)), notion});
+  } catch (e) {
+    logEvent('error', 'blueprint.put.response', {kind: e instanceof Error ? e.name : 'unknown'});
+    return privateJson({
+      version: row.version,
+      updatedAt: row.createdAt.toISOString(),
+      data: parsed.data,
+      suggestions: [],
+      notionPageUrl: null,
+      notion
+    });
+  }
 }
 
 /** Confirms or dismisses a note Deevaa inferred from chat. Only confirmed notes reach the planner. */

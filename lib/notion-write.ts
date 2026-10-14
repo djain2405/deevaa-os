@@ -40,7 +40,8 @@ const MESSAGES: Record<WriteErrorCode, string> = {
   verify_failed: 'Notion accepted the request, but reading the page back did not show the change.'
 };
 
-const fail = (code: WriteErrorCode) => new NotionWriteError(code, MESSAGES[code]);
+export const notionWriteError = (code: WriteErrorCode) => new NotionWriteError(code, MESSAGES[code]);
+const fail = notionWriteError;
 
 function codeFor(status: number): WriteErrorCode {
   if (status === 401) return 'unauthorized';

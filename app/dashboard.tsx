@@ -165,7 +165,7 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
     if (
       granting &&
       !window.confirm(
-        'Let Deevaa create and update tasks in your Deevaa Tasks database from what you tell it in chat?\n\nIt only changes task fields (title, status, due date, priority, duration, project, next action), verifies every write, and keeps an undo record. It never deletes tasks, sends messages, books anything or edits your calendar. You can turn this off at any time.'
+        'Let Deevaa create and update tasks in your Deevaa Tasks database from what you tell it in chat, and publish your Life Blueprint as a Notion page under the same parent?\n\nIt only changes task fields (title, status, due date, priority, duration, project, next action), verifies every write, and keeps an undo record. It never deletes tasks, sends messages, books anything or edits your calendar. You can turn this off at any time.'
       )
     )
       return;
@@ -183,8 +183,9 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
     try {
       const res = await fetch('/api/briefing', {cache: 'no-store'});
       if (res.status === 401) return void (window.location.href = '/login');
-      const body = await res.json();
+      const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error?.message ?? 'Could not load the briefing.');
+      if (!body) throw new Error('Could not load the briefing.');
       setData(body);
       setError('');
       return body as Payload;
@@ -206,8 +207,9 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
           body: JSON.stringify(date ? {date} : {})
         });
         if (res.status === 401) return void (window.location.href = '/login');
-        const body = await res.json();
+        const body = await res.json().catch(() => null);
         if (!res.ok) setError(body?.error?.message ?? 'The briefing could not be generated.');
+        else if (!body) setError('The briefing could not be generated.');
         else if (body.outcome === 'kept_previous') setNotice('A source failed during refresh, so the previous briefing was kept.');
         else setNotice(body.outcome === 'duplicate' ? 'That refresh already ran.' : 'Briefing regenerated from the connected sources.');
         setAction(null);
@@ -542,7 +544,7 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
                 {conn?.notion === 'not_configured' && !b && <p className="muted small">Set NOTION_TOKEN and NOTION_DATA_SOURCE_ID on the server.</p>}
                 {conn?.notion === 'configured' && writes && (
                   <div className="row-actions">
-                    <span className="muted small">Task updates from chat: {writes === 'granted' ? 'On' : 'Off'}</span>
+                    <span className="muted small">Notion task updates and Life Blueprint publish: {writes === 'granted' ? 'On' : 'Off'}</span>
                     <button type="button" className={writes === 'granted' ? 'ghost' : ''} onClick={toggleWrites} aria-pressed={writes === 'granted'}>
                       {writes === 'granted' ? 'Turn off' : 'Turn on'}
                     </button>
@@ -585,7 +587,7 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
         </details>
 
         <details className="panel blueprint" open>
-          <summary>Life Blueprint (saved on this device — not in Notion)</summary>
+          <summary>Life Blueprint (ranking source — optional Notion copy)</summary>
           <BlueprintPanel onSaved={() => regenerate(crypto.randomUUID())} />
         </details>
 

@@ -4,6 +4,7 @@ import {runBriefing} from './briefing-service';
 import {latestBlueprint, saveBlueprint} from './intake-store';
 import {dice} from './intake-match';
 import {localDate} from './time';
+import {publishLifeBlueprintToNotion, type BlueprintNotionPublish} from './notion-blueprint';
 import {NotionWriteError, type TaskFields, type WriteTarget, createTask, loadWriteTarget, updateTask, findByExternalKey, retrieveTask} from './notion-write';
 import {fetchNotionTasks} from './notion';
 import type {Task} from './types';
@@ -23,6 +24,7 @@ export type ImportApplyResult = {
   counts: ImportPreview['counts'];
   message: string;
   briefing: unknown;
+  notion: BlueprintNotionPublish;
 };
 
 const DUPLICATE = 0.75;
@@ -72,6 +74,7 @@ type ApplyDeps = {
   findByKey?: (target: WriteTarget, key: string) => Promise<Task | null>;
   retrieve?: (target: WriteTarget, id: string) => Promise<{task: Task | null; trashed: boolean}>;
   skipBriefing?: boolean;
+  publishBlueprint?: (userId: string, blueprint: Blueprint) => Promise<BlueprintNotionPublish>;
 };
 
 export async function applyImportPreview(
@@ -82,7 +85,7 @@ export async function applyImportPreview(
 ): Promise<ImportApplyResult> {
   const hash = previewSha256(preview);
   if (hash !== expectedPreviewHash) {
-    return {outcome: 'stale', blueprintVersion: null, items: [], counts: preview.counts, message: 'The preview changed. Reload and approve again.', briefing: null};
+    return {outcome: 'stale', blueprintVersion: null, items: [], counts: preview.counts, message: 'The preview changed. Reload and approve again.', briefing: null, notion: {status: 'skipped', url: null, message: ''}};
   }
 
   const now = opts.now ?? (() => new Date());
@@ -90,7 +93,7 @@ export async function applyImportPreview(
   const merged = mergeBlueprint(current ? parseBlueprint(current.data) : null, preview.blueprint);
   const saved = await saveBlueprint(userId, merged, current?.version ?? 0);
   if (!saved) {
-    return {outcome: 'stale', blueprintVersion: null, items: [], counts: preview.counts, message: 'The Blueprint changed while you were reviewing. Reload and try again.', briefing: null};
+    return {outcome: 'stale', blueprintVersion: null, items: [], counts: preview.counts, message: 'The Blueprint changed while you were reviewing. Reload and try again.', briefing: null, notion: {status: 'skipped', url: null, message: ''}};
   }
 
   let target: WriteTarget;
@@ -103,7 +106,8 @@ export async function applyImportPreview(
       items: [],
       counts: preview.counts,
       message: e instanceof NotionWriteError ? e.message : 'Notion is not ready for writes.',
-      briefing: null
+      briefing: null,
+      notion: {status: 'skipped', url: null, message: ''}
     };
   }
 
@@ -171,5 +175,8 @@ export async function applyImportPreview(
           ? `Blueprint v${saved.version} was saved, but Notion writes failed.`
           : 'Import applied.';
 
-  return {outcome, blueprintVersion: saved.version, items, counts: preview.counts, message, briefing: briefing?.briefing ?? null};
+  const publish = opts.publishBlueprint ?? publishLifeBlueprintToNotion;
+  const notion = await publish(userId, merged);
+
+  return {outcome, blueprintVersion: saved.version, items, counts: preview.counts, message, briefing: briefing?.briefing ?? null, notion};
 }
