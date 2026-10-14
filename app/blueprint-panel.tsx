@@ -37,6 +37,7 @@ export function BlueprintPanel({onSaved}: {onSaved: () => void}) {
   const [importTasks, setImportTasks] = useState<ImportTask[]>([]);
   const [importBusy, setImportBusy] = useState(false);
   const [loadError, setLoadError] = useState('');
+  const [editing, setEditing] = useState(false);
 
   const load = useCallback(async () => {
     setLoadError('');
@@ -52,6 +53,8 @@ export function BlueprintPanel({onSaved}: {onSaved: () => void}) {
     const body: View = await res.json();
     setView(body);
     setDraft(toText(body.data));
+    const hasContent = BLUEPRINT_FIELDS.some((f) => body.data[f.key].length > 0);
+    setEditing(!hasContent);
   }, []);
 
   useEffect(() => {
@@ -71,7 +74,15 @@ export function BlueprintPanel({onSaved}: {onSaved: () => void}) {
     setView(body);
     setDraft(toText(body.data));
     setMessage(`Blueprint saved as version ${body.version}. (Each save increases the version number; that is normal.) The briefing is refreshing.`);
+    setEditing(false);
     onSaved();
+  }
+
+  function cancelEdit() {
+    if (!view) return;
+    setDraft(toText(view.data));
+    setEditing(false);
+    setMessage('');
   }
 
   async function review(id: string, action: 'confirm' | 'dismiss') {
@@ -148,27 +159,75 @@ export function BlueprintPanel({onSaved}: {onSaved: () => void}) {
     <section className="panel blueprint" aria-labelledby="blueprint-title">
       <h2 id="blueprint-title">Life Blueprint</h2>
       <p className="muted">
-        Only what you confirm here shapes your priorities. <strong>Import</strong> writes Blueprint + Notion tasks after you approve.{' '}
-        <strong>Save Blueprint</strong> only updates the text sections below (it does not fix Notion due dates).{' '}
-        {view.version ? `Current Blueprint version ${view.version} (${filled} section(s) filled).` : 'Empty for now.'}
+        Only what you confirm here shapes your priorities. This is saved on this device, not in Notion.{' '}
+        {view.version ? `Version ${view.version} · ${filled} section${filled === 1 ? '' : 's'} filled.` : 'Empty for now.'}
       </p>
 
       {message && <p className="notice" role="status">{message}</p>}
 
-      <div className="import-block">
-        <h3 className="small">Import Life Blueprint (one time)</h3>
-        <p className="muted small">Paste or upload your markdown export. Deevaa maps it into Blueprint sections and Notion tasks. You approve before anything is saved.</p>
-        <textarea className="import-paste" rows={4} placeholder="Paste life-blueprint-import.md contents…" value={pasteMd} onChange={(e) => setPasteMd(e.target.value)} />
-        <div className="row-actions">
-          <label className="ghost small-btn">
-            Upload .md
-            <input type="file" accept=".md,text/markdown,text/plain" hidden onChange={onFile} />
-          </label>
-          <button type="button" onClick={buildPreview} disabled={importBusy}>
-            {importBusy ? 'Working…' : 'Preview import'}
-          </button>
+      {!editing && filled > 0 && (
+        <div className="blueprint-read" aria-label="Your Life Blueprint">
+          <div className="panel-head">
+            <span className="muted small">Read-only view — used for ranking and briefings.</span>
+            <button type="button" className="small-btn" onClick={() => setEditing(true)}>Edit Blueprint</button>
+          </div>
+          <ul className="plain blueprint-sections">
+            {BLUEPRINT_FIELDS.filter((f) => view.data[f.key].length).map((f) => (
+              <li key={f.key} className="blueprint-section">
+                <h3 className="blueprint-section-title">{f.label}</h3>
+                <ul className="blueprint-lines">
+                  {view.data[f.key].map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
         </div>
-      </div>
+      )}
+
+      {!editing && filled === 0 && (
+        <p className="muted">
+          No sections yet.{' '}
+          <button type="button" className="small-btn" onClick={() => setEditing(true)}>Add Blueprint</button>
+          {' '}or import from markdown below.
+        </p>
+      )}
+
+      {editing && (
+        <div className="blueprint-edit" aria-label="Edit Life Blueprint">
+          <div className="panel-head">
+            <span className="muted small">One line per bullet when you save.</span>
+            {filled > 0 && (
+              <button type="button" className="ghost small-btn" onClick={cancelEdit}>Cancel</button>
+            )}
+          </div>
+          {BLUEPRINT_FIELDS.map((f) => (
+            <label key={f.key}>
+              {f.label} <span className="muted">· {f.hint}</span>
+              <textarea rows={3} value={draft[f.key]} onChange={(e) => setDraft({...draft, [f.key]: e.target.value})} />
+            </label>
+          ))}
+          <button type="button" className="cta" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save Blueprint'}</button>
+        </div>
+      )}
+
+      <details className="blueprint-import-details">
+        <summary>Import Life Blueprint from markdown (one time)</summary>
+        <div className="import-block">
+          <p className="muted small">Paste or upload your markdown export. Deevaa maps it into Blueprint sections and Notion tasks. You approve before anything is saved.</p>
+          <textarea className="import-paste" rows={4} placeholder="Paste life-blueprint-import.md contents…" value={pasteMd} onChange={(e) => setPasteMd(e.target.value)} />
+          <div className="row-actions">
+            <label className="ghost small-btn">
+              Upload .md
+              <input type="file" accept=".md,text/markdown,text/plain" hidden onChange={onFile} />
+            </label>
+            <button type="button" onClick={buildPreview} disabled={importBusy}>
+              {importBusy ? 'Working…' : 'Preview import'}
+            </button>
+          </div>
+        </div>
+      </details>
 
       {pv && (
         <div className="import-preview" role="region" aria-label="Import preview">
@@ -245,16 +304,6 @@ export function BlueprintPanel({onSaved}: {onSaved: () => void}) {
         </>
       )}
 
-      <details open={filled > 0}>
-        <summary>Edit Blueprint manually ({filled} section{filled === 1 ? '' : 's'} filled)</summary>
-        {BLUEPRINT_FIELDS.map((f) => (
-          <label key={f.key}>
-            {f.label} <span className="muted">· {f.hint}</span>
-            <textarea rows={2} value={draft[f.key]} onChange={(e) => setDraft({...draft, [f.key]: e.target.value})} />
-          </label>
-        ))}
-        <button type="button" className="cta" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save Blueprint'}</button>
-      </details>
     </section>
   );
 }
