@@ -68,6 +68,35 @@ const FEEDBACK_BUTTONS: {kind: FeedbackKind; label: string}[] = [
   {kind: 'wrong', label: 'Wrong recommendation'}
 ];
 
+type FeedbackResponse = {notion?: string; message?: string};
+
+function DoneButton({
+  taskId,
+  completingId,
+  onDone
+}: {
+  taskId: string;
+  completingId: string | null;
+  onDone: (id: string) => void;
+}) {
+  const busy = completingId === taskId;
+  const locked = completingId !== null && !busy;
+  return (
+    <button type="button" className="done-btn" onClick={() => onDone(taskId)} disabled={locked || busy} aria-busy={busy}>
+      {busy ? 'Marking…' : 'Done'}
+    </button>
+  );
+}
+
+function DoneToast({taskId, celebrateId}: {taskId: string; celebrateId: string | null}) {
+  if (celebrateId !== taskId) return null;
+  return (
+    <p className="done-toast" role="status">
+      Done — nice work.
+    </p>
+  );
+}
+
 const TZ = 'America/Los_Angeles';
 const time = (iso: string) => new Date(iso).toLocaleTimeString('en-US', {hour: 'numeric', minute: '2-digit', timeZone: TZ});
 const stamp = (iso: string) =>
@@ -120,17 +149,37 @@ function SourceRow({name, health, fallback, children}: {name: string; health?: S
   );
 }
 
-function BlockRow({block}: {block: Block}) {
+function BlockRow({
+  block,
+  completingId,
+  celebrateId,
+  hiddenTaskIds,
+  onDone
+}: {
+  block: Block;
+  completingId: string | null;
+  celebrateId: string | null;
+  hiddenTaskIds: Set<string>;
+  onDone: (id: string) => void;
+}) {
   const when = block.state === 'scheduled' && block.start && block.end ? `${time(block.start)} – ${time(block.end)}` : block.state === 'omitted' ? 'Skipped' : 'No time claimed';
+  const task = block.task;
+  if (task && hiddenTaskIds.has(task.id)) return null;
   return (
-    <li className={`block block-${block.state}`}>
+    <li className={`block block-${block.state}${task && celebrateId === task.id ? ' done-celebrate' : ''}`}>
       <span className="block-label">{block.label}</span>
       <div>
         <p className="block-when">{when}</p>
-        <strong>{block.task ? block.task.title : block.label === 'EXPAND' && block.state !== 'omitted' ? 'Open time, no task assigned' : 'Nothing scheduled'}</strong>
+        <strong>{task ? task.title : block.label === 'EXPAND' && block.state !== 'omitted' ? 'Open time, no task assigned' : 'Nothing scheduled'}</strong>
         <p>{block.reason}</p>
         {block.aiNote && <p className="ai-note"><span>AI note:</span> {block.aiNote}</p>}
-        {block.task && <TaskLinks task={block.task} />}
+        {task && <TaskLinks task={task} />}
+        {task && (
+          <div className="feedback" role="group" aria-label={`Mark ${task.title} done`}>
+            <DoneButton taskId={task.id} completingId={completingId} onDone={onDone} />
+            <DoneToast taskId={task.id} celebrateId={celebrateId} />
+          </div>
+        )}
       </div>
     </li>
   );
@@ -151,7 +200,13 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
   const [whyOpen, setWhyOpen] = useState<string | null>(null);
   const [taskFilter, setTaskFilter] = useState<TaskFilter>('ready');
   const [writes, setWrites] = useState<'granted' | 'off' | null>(null);
+  const [completingId, setCompletingId] = useState<string | null>(null);
+  const [completedIds, setCompletedIds] = useState<string[]>([]);
+  const [celebrateId, setCelebrateId] = useState<string | null>(null);
   const autoStarted = useRef(false);
+  const celebrateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const hiddenTaskIds = new Set(completedIds);
 
   const loadWrites = useCallback(async () => {
     const res = await fetch('/api/permissions', {cache: 'no-store'});
@@ -251,7 +306,42 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
     setAction(findNextAction(tasks, {minutes, energy, context, skipIds: skip, feedback}));
   }
 
+  async function markTaskDone(taskId: string) {
+    if (completingId) return;
+    setCompletingId(taskId);
+    setError('');
+    try {
+      const res = await fetch('/api/feedback', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({taskId, kind: 'done', minutes, energy, context})
+      });
+      const body = (await res.json().catch(() => null)) as FeedbackResponse | null;
+      if (!res.ok) {
+        const err = body as {error?: {message?: string}} | null;
+        setError(err?.error?.message ?? 'Could not mark that task Done.');
+        return;
+      }
+      const ok = body?.notion === 'marked_done' || body?.notion === 'already_done';
+      if (ok) {
+        setCompletedIds((prev) => (prev.includes(taskId) ? prev : [...prev, taskId]));
+        setCelebrateId(taskId);
+        if (celebrateTimer.current) clearTimeout(celebrateTimer.current);
+        celebrateTimer.current = setTimeout(() => setCelebrateId((c) => (c === taskId ? null : c)), 5000);
+      }
+      if (body?.message) setNotice(body.message);
+      if (!ok) return;
+      const local: Feedback = {taskId, kind: 'done', context, createdAt: new Date().toISOString()};
+      const next = await load();
+      choose([...skipped, taskId], [...(next?.feedback ?? data?.feedback ?? []), local], next?.briefing?.tasks ?? data?.briefing?.tasks);
+      if (action?.kind === 'task' && action.task.id === taskId) setAction(null);
+    } finally {
+      setCompletingId(null);
+    }
+  }
+
   async function sendFeedback(taskId: string, kind: FeedbackKind) {
+    if (kind === 'done') return markTaskDone(taskId);
     const res = await fetch('/api/feedback', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -262,15 +352,19 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
     setNotice(body.message);
     const local: Feedback = {taskId, kind, context, createdAt: new Date().toISOString()};
     const next = await load();
-    choose([...skipped, ...(kind === 'done' ? [taskId] : [])], [...(next?.feedback ?? data?.feedback ?? []), local], next?.briefing?.tasks ?? data?.briefing?.tasks);
+    choose(skipped, [...(next?.feedback ?? data?.feedback ?? []), local], next?.briefing?.tasks ?? data?.briefing?.tasks);
   }
 
   const b = data?.briefing ?? null;
   const conn = data?.connections;
   const ready = b?.tasks.filter((t) => t.executable) ?? [];
   const attentionIds = new Set((b?.radar ?? []).map((r) => r.task.id));
-  const topVisible = (b?.topOutcomes ?? []).filter((o) => !topSkipped.includes(o.task.id));
-  const filteredTasks = b?.tasks.filter((t) => taskMatchesFilter(t, taskFilter, attentionIds)) ?? [];
+  const topVisible = (b?.topOutcomes ?? []).filter((o) => !topSkipped.includes(o.task.id) && !hiddenTaskIds.has(o.task.id));
+  const filteredTasks =
+    b?.tasks.filter((t) => {
+      if (hiddenTaskIds.has(t.id) && taskFilter !== 'completed') return false;
+      return taskMatchesFilter(t, taskFilter, attentionIds);
+    }) ?? [];
   const calendarFallback = conn?.calendar.state === 'revoked' ? 'error' : conn?.calendar.state === 'connected' ? 'pending' : 'not_connected';
 
   function skipTop(taskId: string) {
@@ -335,13 +429,19 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
                 <h2 id="radar-title">Needs attention</h2>
                 <p className="muted">Deadlines, blocked work, stale waiting, and uncertain due dates. Deevaa only warns; it does not contact anyone.</p>
                 <ul className="plain">
-                  {b.radar!.map((r) => (
-                    <li key={`${r.kind}-${r.task.id}`}>
-                      <span className="badge">{RADAR_LABEL[r.kind]}</span> <strong>{r.task.title}</strong>
-                      {r.task.url && <a href={r.task.url} target="_blank" rel="noreferrer">Open in Notion</a>}
-                      <p className="muted">{r.detail}</p>
-                    </li>
-                  ))}
+                  {b.radar!
+                    .filter((r) => !hiddenTaskIds.has(r.task.id))
+                    .map((r) => (
+                      <li key={`${r.kind}-${r.task.id}`} className={celebrateId === r.task.id ? 'done-celebrate' : undefined}>
+                        <span className="badge">{RADAR_LABEL[r.kind]}</span> <strong>{r.task.title}</strong>
+                        {r.task.url && <a href={r.task.url} target="_blank" rel="noreferrer">Open in Notion</a>}
+                        <p className="muted">{r.detail}</p>
+                        <div className="feedback" role="group" aria-label={`Mark ${r.task.title} done`}>
+                          <DoneButton taskId={r.task.id} completingId={completingId} onDone={markTaskDone} />
+                          <DoneToast taskId={r.task.id} celebrateId={celebrateId} />
+                        </div>
+                      </li>
+                    ))}
                 </ul>
               </section>
             )}
@@ -349,9 +449,10 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
             {topVisible.length > 0 && (
               <section className="panel" aria-labelledby="top-title">
                 <h2 id="top-title">Top 3 priorities</h2>
+                <p className="muted small">Done updates Notion immediately. Chat task updates still use the Connections toggle.</p>
                 <ol className="outcomes">
                   {topVisible.map((o) => (
-                    <li key={o.task.id}>
+                    <li key={o.task.id} className={celebrateId === o.task.id ? 'done-celebrate' : undefined}>
                       <LaneBadge lane={o.lane} /> <strong>{o.task.title}</strong>
                       {whyOpen === o.task.id && <p className="muted">{o.reasons.join(' · ') || 'Ready in Notion'}</p>}
                       {whyOpen !== o.task.id && <p className="muted">Next: {o.nextAction}</p>}
@@ -361,10 +462,17 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
                         <button type="button" className="ghost" onClick={() => setWhyOpen(whyOpen === o.task.id ? null : o.task.id)} aria-expanded={whyOpen === o.task.id}>
                           Why this?
                         </button>
-                        <button type="button" className="ghost" onClick={() => sendFeedback(o.task.id, 'not_now')}>Not now</button>
-                        <button type="button" className="ghost" onClick={() => sendFeedback(o.task.id, 'wrong')}>Wrong priority</button>
-                        <button type="button" onClick={() => sendFeedback(o.task.id, 'done')}>Done</button>
-                        <button type="button" className="ghost" onClick={() => skipTop(o.task.id)}>Choose another</button>
+                        <button type="button" className="ghost" onClick={() => sendFeedback(o.task.id, 'not_now')} disabled={!!completingId}>
+                          Not now
+                        </button>
+                        <button type="button" className="ghost" onClick={() => sendFeedback(o.task.id, 'wrong')} disabled={!!completingId}>
+                          Wrong priority
+                        </button>
+                        <DoneButton taskId={o.task.id} completingId={completingId} onDone={markTaskDone} />
+                        <button type="button" className="ghost" onClick={() => skipTop(o.task.id)} disabled={!!completingId}>
+                          Choose another
+                        </button>
+                        <DoneToast taskId={o.task.id} celebrateId={celebrateId} />
                       </div>
                     </li>
                   ))}
@@ -376,7 +484,18 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
               <section className="panel" aria-labelledby="blocks-title">
                 <h2 id="blocks-title">Today’s blocks</h2>
                 <p className="muted">Suggestions only. Deevaa does not create or change calendar events.</p>
-                <ul className="plain">{b.blocks.map((x) => <BlockRow key={x.label} block={x} />)}</ul>
+                <ul className="plain">
+                  {b.blocks.map((x) => (
+                    <BlockRow
+                      key={x.label}
+                      block={x}
+                      completingId={completingId}
+                      celebrateId={celebrateId}
+                      hiddenTaskIds={hiddenTaskIds}
+                      onDone={markTaskDone}
+                    />
+                  ))}
+                </ul>
               </section>
 
               <section className="panel" aria-labelledby="calendar-title">
@@ -431,18 +550,23 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
                   Choose one action →
                 </button>
                 <div aria-live="polite">
-                  {action?.kind === 'task' && (
+                  {action?.kind === 'task' && !hiddenTaskIds.has(action.task.id) && (
                     <div className="selected">
                       <b>{action.task.title}</b>
                       <p>{action.reason}</p>
                       <p>{action.doneDefinition}</p>
                       <TaskLinks task={action.task} />
                       <div className="feedback" role="group" aria-label="How did this recommendation work?">
-                        {FEEDBACK_BUTTONS.map((f) => (
-                          <button key={f.kind} type="button" className={f.kind === 'done' ? '' : 'ghost'} onClick={() => sendFeedback(action.task.id, f.kind)}>
-                            {f.label}
-                          </button>
-                        ))}
+                        {FEEDBACK_BUTTONS.map((f) =>
+                          f.kind === 'done' ? (
+                            <DoneButton key={f.kind} taskId={action.task.id} completingId={completingId} onDone={markTaskDone} />
+                          ) : (
+                            <button key={f.kind} type="button" className="ghost" onClick={() => sendFeedback(action.task.id, f.kind)} disabled={!!completingId}>
+                              {f.label}
+                            </button>
+                          )
+                        )}
+                        <DoneToast taskId={action.task.id} celebrateId={celebrateId} />
                         <button type="button" className="ghost" onClick={() => choose([...skipped, action.task.id])}>
                           Something else
                         </button>
@@ -464,15 +588,21 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
                 <h2 id="waiting-title">Waiting</h2>
                 <p className="muted">No action from you until they reply.</p>
                 <ul className="plain">
-                  {b.waiting!.map((t) => (
-                    <li key={t.id} className="task">
-                      <div>
-                        <LaneBadge lane={t.lane} /> <strong>{t.title}</strong>
-                        <small>{t.excludedReason ?? t.status}</small>
-                      </div>
-                      <TaskLinks task={t} />
-                    </li>
-                  ))}
+                  {b.waiting!
+                    .filter((t) => !hiddenTaskIds.has(t.id))
+                    .map((t) => (
+                      <li key={t.id} className={`task${celebrateId === t.id ? ' done-celebrate' : ''}`}>
+                        <div>
+                          <LaneBadge lane={t.lane} /> <strong>{t.title}</strong>
+                          <small>{t.excludedReason ?? t.status}</small>
+                          <div className="feedback" role="group" aria-label={`Mark ${t.title} done`}>
+                            <DoneButton taskId={t.id} completingId={completingId} onDone={markTaskDone} />
+                            <DoneToast taskId={t.id} celebrateId={celebrateId} />
+                          </div>
+                        </div>
+                        <TaskLinks task={t} />
+                      </li>
+                    ))}
                 </ul>
               </section>
             )}
@@ -509,7 +639,7 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
               {filteredTasks.length ? (
                 <ul className="plain">
                   {filteredTasks.map((t) => (
-                    <li key={t.id} className="task">
+                    <li key={t.id} className={`task${celebrateId === t.id ? ' done-celebrate' : ''}`}>
                       <div>
                         <LaneBadge lane={t.lane} /> <strong>{t.title}</strong>
                         <small>
@@ -518,6 +648,12 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
                         </small>
                         {t.excludedReason && <small>{t.excludedReason}</small>}
                         {!t.excludedReason && t.reasons.length > 0 && <small>Why: {t.reasons.join(' · ')}</small>}
+                        {t.lane !== 'Completed' && t.status !== 'Done' && (
+                          <div className="feedback" role="group" aria-label={`Mark ${t.title} done`}>
+                            <DoneButton taskId={t.id} completingId={completingId} onDone={markTaskDone} />
+                            <DoneToast taskId={t.id} celebrateId={celebrateId} />
+                          </div>
+                        )}
                       </div>
                       <TaskLinks task={t} />
                     </li>

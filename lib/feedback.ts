@@ -1,19 +1,19 @@
 import {defaultIntakeDeps, type IntakeDeps} from './intake';
-import {addFeedback, hasPermission, NOTION_WRITE} from './intake-store';
+import {addFeedback} from './intake-store';
 import type {FeedbackKind} from './next-action';
 import {NotionWriteError} from './notion-write';
 import {audit} from './store';
 
 export type FeedbackOutcome = {
   recorded: true;
-  notion: 'marked_done' | 'already_done' | 'writes_off' | 'failed' | 'not_applicable';
+  notion: 'marked_done' | 'already_done' | 'failed' | 'not_applicable';
   message: string;
   briefing: string | null;
 };
 
 /**
- * Stores feedback on a recommendation. "Done" is the user's own statement; it is written to Notion only when
- * task updates are on, and only reported as marked after Notion shows the new status.
+ * Stores feedback on a recommendation. "Done" is the user's own statement; it always writes to Notion
+ * (independent of chat task-update permission) and is only reported as marked after Notion shows the new status.
  */
 export async function recordFeedback(
   userId: string,
@@ -29,9 +29,6 @@ export async function recordFeedback(
       wrong: 'Thanks. Deevaa will rank it lower for two weeks.'
     }[input.kind];
     return {recorded: true, notion: 'not_applicable', message, briefing: null};
-  }
-  if (!(await hasPermission(userId, NOTION_WRITE))) {
-    return {recorded: true, notion: 'writes_off', message: 'Recorded. Notion updates are off, so mark it Done in Notion yourself.', briefing: null};
   }
   try {
     const target = await deps.target();

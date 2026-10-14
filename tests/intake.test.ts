@@ -286,19 +286,23 @@ describe('Chief of Staff uses confirmed context and feedback', () => {
     expect((await put(1, ['Become a GDE', 'Run a half marathon'])).status).toBe(200);
   });
 
-  it('writes Done to Notion only with standing permission, and verifies it', async () => {
+  it('writes Done to Notion without chat write permission and verifies it', async () => {
     const notion = fakeNotion([task({id: 't', title: 'Call the landlord', status: 'Ready'})]);
-    const off = await recordFeedback(userId, {taskId: 't', kind: 'done', minutes: 10, energy: 'Low', context: 'Phone'}, notion.deps);
-    expect(off.notion).toBe('writes_off');
-    expect(notion.pages.get('t')!.status).toBe('Ready');
-    await grant();
-    const on = await recordFeedback(userId, {taskId: 't', kind: 'done', minutes: 10, energy: 'Low', context: 'Phone'}, notion.deps);
-    expect(on.notion).toBe('marked_done');
+    const done = await recordFeedback(userId, {taskId: 't', kind: 'done', minutes: 10, energy: 'Low', context: 'Phone'}, notion.deps);
+    expect(done.notion).toBe('marked_done');
     expect(notion.pages.get('t')!.status).toBe('Done');
     expect(notion.calls.refresh).toBe(1);
     const other = await recordFeedback(userId, {taskId: 't', kind: 'wrong', minutes: null, energy: null, context: null}, notion.deps);
     expect(other.notion).toBe('not_applicable');
     expect(notion.calls.update).toBe(1);
+  });
+
+  it('still proposes chat writes when standing permission is off', async () => {
+    await setPermission(userId, NOTION_WRITE, 'revoked');
+    const notion = fakeNotion();
+    const r = await processMessage({userId, message: 'I need to buy cat food.', clientKey: key()}, notion.deps);
+    expect(r.items[0]?.action).toBe('proposed');
+    expect(notion.pages.size).toBe(0);
   });
 });
 

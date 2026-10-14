@@ -146,7 +146,11 @@ Already have a database? Set `NOTION_DATA_SOURCE_ID` (or `NOTION_DATABASE_ID`) a
 
 Chat writes skip properties your database does not have and report them. A Status property of Notion's *status* type must already contain the option being written.
 
-## Deployment (Vercel + managed Postgres)
+## Deployment
+
+**Recommended:** [Railway + Postgres](docs/DEPLOY-RAILWAY.md) — always-on Node, no short serverless timeouts, nightly cron via [`railway.toml`](railway.toml). Use this if you want access from anywhere and future scheduled agent work.
+
+### Vercel + managed Postgres
 
 1. Create a Postgres database (Neon, Supabase, or Vercel Postgres) and copy its connection string.
 2. Import the private GitHub repo into Vercel.

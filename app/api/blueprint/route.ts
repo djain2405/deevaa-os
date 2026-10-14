@@ -8,6 +8,7 @@ import {logEvent} from '@/lib/log';
 import {audit, getBlueprintNotionPageId} from '@/lib/store';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 120;
 
 async function view(userId: string) {
   const row = await latestBlueprint(userId);

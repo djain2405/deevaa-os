@@ -12,9 +12,21 @@ function embeddedDir() {
   return path.join(process.cwd(), '.data', 'pglite');
 }
 
+async function migratePostgres(url: string) {
+  const {Client} = await import('pg');
+  const client = new Client({connectionString: url});
+  await client.connect();
+  try {
+    for (const sql of MIGRATIONS) await client.query(sql);
+  } finally {
+    await client.end();
+  }
+}
+
 async function connect(): Promise<Db> {
   const url = process.env.DATABASE_URL?.trim();
   if (url) {
+    await migratePostgres(url);
     const {Pool} = await import('pg');
     const {drizzle} = await import('drizzle-orm/node-postgres');
     return drizzle(new Pool({connectionString: url, max: 5}), {schema}) as unknown as Db;

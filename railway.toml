@@ -1,0 +1,15 @@
+# Railway deploy: https://docs.railway.com/guides/nextjs
+[build]
+builder = "nixpacks"
+buildCommand = "npm run build"
+
+[deploy]
+startCommand = "npm run start"
+healthcheckPath = "/login"
+healthcheckTimeout = 120
+restartPolicyType = "on_failure"
+
+# Nightly briefing (05:00 UTC). Requires APP_URL and CRON_SECRET on this service.
+[[cron]]
+schedule = "0 5 * * *"
+command = "sh scripts/trigger-cron.sh"
