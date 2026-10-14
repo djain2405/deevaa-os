@@ -180,11 +180,18 @@ export async function upsertBriefing(input: {
 
 export async function getBriefing(userId: string, localDate: string, version: number) {
   const db = await getDb();
-  const [row] = await db
+  const [exact] = await db
     .select()
     .from(briefings)
     .where(and(eq(briefings.userId, userId), eq(briefings.localDate, localDate), eq(briefings.version, version)));
-  return row ?? null;
+  if (exact) return exact;
+  const [latest] = await db
+    .select()
+    .from(briefings)
+    .where(and(eq(briefings.userId, userId), eq(briefings.localDate, localDate)))
+    .orderBy(desc(briefings.version))
+    .limit(1);
+  return latest ?? null;
 }
 
 export async function countBriefings(userId: string, localDate: string) {

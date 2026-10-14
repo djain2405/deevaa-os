@@ -1,17 +1,19 @@
+import path from 'node:path';
 import type {PgDatabase, PgQueryResultHKT} from 'drizzle-orm/pg-core';
 import * as schema from './schema';
 import {MIGRATIONS} from './migrations';
 
 export type Db = PgDatabase<PgQueryResultHKT, typeof schema>;
 
-let dbPromise: Promise<Db> | null = null;
+const globalDb = globalThis as typeof globalThis & {__deevaaDbPromise?: Promise<Db> | null};
 
-export function storeKind(): 'postgres' | 'embedded' {
-  return process.env.DATABASE_URL ? 'postgres' : 'embedded';
+function embeddedDir() {
+  if (process.env.PGLITE_DIR) return process.env.PGLITE_DIR;
+  return path.join(process.cwd(), '.data', 'pglite');
 }
 
 async function connect(): Promise<Db> {
-  const url = process.env.DATABASE_URL;
+  const url = process.env.DATABASE_URL?.trim();
   if (url) {
     const {Pool} = await import('pg');
     const {drizzle} = await import('drizzle-orm/node-postgres');
@@ -22,21 +24,25 @@ async function connect(): Promise<Db> {
   }
   const {PGlite} = await import('@electric-sql/pglite');
   const {drizzle} = await import('drizzle-orm/pglite');
-  const client = new PGlite(process.env.PGLITE_DIR || './.data/pglite');
+  const client = new PGlite(embeddedDir());
   for (const sql of MIGRATIONS) await client.exec(sql);
   return drizzle(client, {schema}) as unknown as Db;
 }
 
+export function storeKind(): 'postgres' | 'embedded' {
+  return process.env.DATABASE_URL?.trim() ? 'postgres' : 'embedded';
+}
+
 export function getDb(): Promise<Db> {
-  if (!dbPromise) {
-    dbPromise = connect().catch((e) => {
-      dbPromise = null;
+  if (!globalDb.__deevaaDbPromise) {
+    globalDb.__deevaaDbPromise = connect().catch((e) => {
+      globalDb.__deevaaDbPromise = null;
       throw e;
     });
   }
-  return dbPromise;
+  return globalDb.__deevaaDbPromise;
 }
 
 export function setDbForTests(db: Db | null) {
-  dbPromise = db ? Promise.resolve(db) : null;
+  globalDb.__deevaaDbPromise = db ? Promise.resolve(db) : null;
 }

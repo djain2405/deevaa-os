@@ -5,7 +5,7 @@ import {BlueprintPanel} from './blueprint-panel';
 import {ChatPanel} from './chat-panel';
 import type {Connections} from '@/lib/briefing-view';
 import {ACTION_WINDOWS, CONTEXTS, ENERGY_LEVELS, findNextAction, type Feedback, type FeedbackKind, type NextAction} from '@/lib/next-action';
-import type {Block, BriefingSnapshot, Context, Energy, RadarItem, SourceHealth, TaskRef} from '@/lib/types';
+import type {AgentDeliverable, Block, BriefingSnapshot, Context, DecisionLane, Energy, RadarItem, RankedTask, SourceHealth, TaskRef} from '@/lib/types';
 
 type RunView = {id: string; trigger: string; status: string; errorCode: string | null; startedAt: string; finishedAt: string | null};
 type Payload = {
@@ -22,8 +22,44 @@ const RADAR_LABEL: Record<RadarItem['kind'], string> = {
   blocked_deadline: 'Blocked, deadline close',
   overdue: 'Overdue',
   due_soon: 'Due soon',
-  stale_waiting: 'Follow up'
+  stale_waiting: 'Follow up',
+  verify_deadline: 'Verify deadline'
 };
+
+type TaskFilter = 'attention' | 'ready' | 'scheduled' | 'waiting_blocked' | 'someday' | 'completed';
+
+const TASK_FILTERS: {id: TaskFilter; label: string}[] = [
+  {id: 'attention', label: 'Needs attention'},
+  {id: 'ready', label: 'Ready'},
+  {id: 'scheduled', label: 'Scheduled'},
+  {id: 'waiting_blocked', label: 'Waiting / Blocked'},
+  {id: 'someday', label: 'Someday'},
+  {id: 'completed', label: 'Completed'}
+];
+
+function LaneBadge({lane}: {lane: DecisionLane}) {
+  const urgent = lane === 'Critical' || lane === 'Due soon';
+  return <span className={`badge lane-badge ${urgent ? 'lane-urgent' : lane === 'Important' ? 'lane-important' : ''}`}>{lane}</span>;
+}
+
+function taskMatchesFilter(t: RankedTask, filter: TaskFilter, attentionIds: Set<string>) {
+  switch (filter) {
+    case 'attention':
+      return attentionIds.has(t.id) || t.lane === 'Verify';
+    case 'ready':
+      return t.executable && (t.lane === 'Critical' || t.lane === 'Due soon' || t.lane === 'Important');
+    case 'scheduled':
+      return t.lane === 'Scheduled';
+    case 'waiting_blocked':
+      return t.lane === 'Waiting' || t.lane === 'Blocked';
+    case 'someday':
+      return t.lane === 'Someday';
+    case 'completed':
+      return t.lane === 'Completed';
+    default:
+      return true;
+  }
+}
 
 const FEEDBACK_BUTTONS: {kind: FeedbackKind; label: string}[] = [
   {kind: 'done', label: 'Done'},
@@ -111,6 +147,9 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
   const [context, setContext] = useState<Context>('Anywhere');
   const [action, setAction] = useState<NextAction | null>(null);
   const [skipped, setSkipped] = useState<string[]>([]);
+  const [topSkipped, setTopSkipped] = useState<string[]>([]);
+  const [whyOpen, setWhyOpen] = useState<string | null>(null);
+  const [taskFilter, setTaskFilter] = useState<TaskFilter>('ready');
   const [writes, setWrites] = useState<'granted' | 'off' | null>(null);
   const autoStarted = useRef(false);
 
@@ -172,6 +211,7 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
         else if (body.outcome === 'kept_previous') setNotice('A source failed during refresh, so the previous briefing was kept.');
         else setNotice(body.outcome === 'duplicate' ? 'That refresh already ran.' : 'Briefing regenerated from the connected sources.');
         setAction(null);
+        setTopSkipped([]);
         await load();
       } finally {
         setBusy(false);
@@ -226,8 +266,14 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
   const b = data?.briefing ?? null;
   const conn = data?.connections;
   const ready = b?.tasks.filter((t) => t.executable) ?? [];
-  const parked = b?.tasks.filter((t) => !t.executable && t.status !== 'Done' && t.status !== 'Canceled') ?? [];
+  const attentionIds = new Set((b?.radar ?? []).map((r) => r.task.id));
+  const topVisible = (b?.topOutcomes ?? []).filter((o) => !topSkipped.includes(o.task.id));
+  const filteredTasks = b?.tasks.filter((t) => taskMatchesFilter(t, taskFilter, attentionIds)) ?? [];
   const calendarFallback = conn?.calendar.state === 'revoked' ? 'error' : conn?.calendar.state === 'connected' ? 'pending' : 'not_connected';
+
+  function skipTop(taskId: string) {
+    setTopSkipped((prev) => (prev.includes(taskId) ? prev : [...prev, taskId]));
+  }
 
   return (
     <>
@@ -280,62 +326,12 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
           </section>
         ) : null}
 
-        <ChatPanel writes={writes} onChanged={load} />
-
-        <section className="panel" aria-labelledby="sources-title">
-          <h2 id="sources-title">Connections</h2>
-          <ul className="conns">
-            <SourceRow name="Notion tasks" health={b?.sources.notion} fallback={conn?.notion === 'configured' ? 'pending' : 'not_connected'}>
-              {conn?.notion === 'not_configured' && !b && <p className="muted small">Set NOTION_TOKEN and NOTION_DATA_SOURCE_ID on the server.</p>}
-              {conn?.notion === 'configured' && writes && (
-                <div className="row-actions">
-                  <span className="muted small">Task updates from chat: {writes === 'granted' ? 'On' : 'Off'}</span>
-                  <button type="button" className={writes === 'granted' ? 'ghost' : ''} onClick={toggleWrites} aria-pressed={writes === 'granted'}>
-                    {writes === 'granted' ? 'Turn off' : 'Turn on'}
-                  </button>
-                </div>
-              )}
-            </SourceRow>
-            <SourceRow name="Google Calendar (read-only)" health={b && conn?.calendar.state !== 'not_connected' ? b.sources.calendar : undefined} fallback={calendarFallback}>
-              {conn?.calendar.state === 'connected' ? (
-                <div className="row-actions">
-                  <span className="muted small">{conn.calendar.calendarCount} calendar(s)</span>
-                  <button type="button" className="ghost" onClick={disconnect}>Disconnect</button>
-                </div>
-              ) : (
-                <form method="post" action="/api/google/connect">
-                  <button type="submit">{conn?.calendar.state === 'revoked' ? 'Reconnect' : 'Connect'} Google Calendar</button>
-                </form>
-              )}
-            </SourceRow>
-            <li className="conn">
-              <div>
-                <strong>AI explanations</strong> <span className={`badge badge-${conn?.ai === 'enabled' ? 'connected' : 'not_connected'}`}>{conn?.ai === 'enabled' ? 'On' : 'Off'}</span>
-                <p className="muted">{b?.ai.detail ?? (conn?.ai === 'enabled' ? 'Optional wording on top of the deterministic plan.' : 'Plans are deterministic; set OPENAI_API_KEY for optional explanations.')}</p>
-              </div>
-            </li>
-            <li className="conn">
-              <div>
-                <strong>Scheduled briefing</strong>{' '}
-                <span className={`badge badge-${conn?.scheduler.lastStatus === 'succeeded' ? 'connected' : conn?.scheduler.lastStatus === 'failed' ? 'error' : 'not_connected'}`}>
-                  {conn?.scheduler.lastRunAt ? (conn.scheduler.lastStatus === 'succeeded' ? 'Last run succeeded' : `Last run ${conn.scheduler.lastStatus}`) : 'No run recorded'}
-                </span>
-                <p className="muted">
-                  {conn?.scheduler.lastRunAt
-                    ? `A scheduler called Deevaa at ${stamp(conn.scheduler.lastRunAt)}.`
-                    : 'Nothing has triggered a nightly briefing yet. Scheduling is only active once the app is deployed and a cron call has succeeded.'}
-                </p>
-              </div>
-            </li>
-          </ul>
-        </section>
-
         {b && (
           <div id="briefing">
             {(b.radar?.length ?? 0) > 0 && (
               <section className="panel radar" aria-labelledby="radar-title">
                 <h2 id="radar-title">Needs attention</h2>
-                <p className="muted">From your Notion deadlines and statuses. Deevaa only warns; it does not contact anyone.</p>
+                <p className="muted">Deadlines, blocked work, stale waiting, and uncertain due dates. Deevaa only warns; it does not contact anyone.</p>
                 <ul className="plain">
                   {b.radar!.map((r) => (
                     <li key={`${r.kind}-${r.task.id}`}>
@@ -348,16 +344,26 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
               </section>
             )}
 
-            {b.topOutcomes.length > 0 && (
+            {topVisible.length > 0 && (
               <section className="panel" aria-labelledby="top-title">
-                <h2 id="top-title">Top outcomes</h2>
+                <h2 id="top-title">Top 3 priorities</h2>
                 <ol className="outcomes">
-                  {b.topOutcomes.map((o) => (
+                  {topVisible.map((o) => (
                     <li key={o.task.id}>
-                      <strong>{o.task.title}</strong>
-                      <p className="muted">{o.reasons.join(' · ') || 'Ready in Notion'}</p>
+                      <LaneBadge lane={o.lane} /> <strong>{o.task.title}</strong>
+                      {whyOpen === o.task.id && <p className="muted">{o.reasons.join(' · ') || 'Ready in Notion'}</p>}
+                      {whyOpen !== o.task.id && <p className="muted">Next: {o.nextAction}</p>}
                       {o.aiNote && <p className="ai-note"><span>AI note:</span> {o.aiNote}</p>}
                       <TaskLinks task={o.task} />
+                      <div className="feedback" role="group" aria-label={`Feedback for ${o.task.title}`}>
+                        <button type="button" className="ghost" onClick={() => setWhyOpen(whyOpen === o.task.id ? null : o.task.id)} aria-expanded={whyOpen === o.task.id}>
+                          Why this?
+                        </button>
+                        <button type="button" className="ghost" onClick={() => sendFeedback(o.task.id, 'not_now')}>Not now</button>
+                        <button type="button" className="ghost" onClick={() => sendFeedback(o.task.id, 'wrong')}>Wrong priority</button>
+                        <button type="button" onClick={() => sendFeedback(o.task.id, 'done')}>Done</button>
+                        <button type="button" className="ghost" onClick={() => skipTop(o.task.id)}>Choose another</button>
+                      </div>
                     </li>
                   ))}
                 </ol>
@@ -451,50 +457,137 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
               </section>
             </div>
 
-            <section className="panel" aria-labelledby="queue-title">
-              <h2 id="queue-title">
-                Ready in Notion <small>{ready.length}</small>
-              </h2>
-              {ready.length ? (
+            {(b.waiting?.length ?? 0) > 0 && (
+              <section className="panel" aria-labelledby="waiting-title">
+                <h2 id="waiting-title">Waiting</h2>
+                <p className="muted">No action from you until they reply.</p>
                 <ul className="plain">
-                  {ready.map((t) => (
+                  {b.waiting!.map((t) => (
                     <li key={t.id} className="task">
                       <div>
-                        <strong>{t.title}</strong>
+                        <LaneBadge lane={t.lane} /> <strong>{t.title}</strong>
+                        <small>{t.excludedReason ?? t.status}</small>
+                      </div>
+                      <TaskLinks task={t} />
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {(b.agentWork?.length ?? 0) > 0 && (
+              <section className="panel" aria-labelledby="agents-title">
+                <h2 id="agents-title">Agents prepared</h2>
+                <p className="muted">Derived from this briefing only — not a simulated run log.</p>
+                <ul className="plain">
+                  {b.agentWork!.map((a: AgentDeliverable) => (
+                    <li key={a.agent} className="task">
+                      <div>
+                        <strong>{a.agent}</strong> <span className="badge badge-connected">{a.status}</span>
+                        <small>{a.summary}</small>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            <details className="panel">
+              <summary>
+                <h2 className="inline-title">All tasks ({b.tasks.length})</h2>
+              </summary>
+              <fieldset className="windows">
+                <legend className="small muted">Filter</legend>
+                {TASK_FILTERS.map((f) => (
+                  <button key={f.id} type="button" className={taskFilter === f.id ? 'chip on' : 'chip'} aria-pressed={taskFilter === f.id} onClick={() => setTaskFilter(f.id)}>
+                    {f.label}
+                  </button>
+                ))}
+              </fieldset>
+              {filteredTasks.length ? (
+                <ul className="plain">
+                  {filteredTasks.map((t) => (
+                    <li key={t.id} className="task">
+                      <div>
+                        <LaneBadge lane={t.lane} /> <strong>{t.title}</strong>
                         <small>
                           {t.status} · {t.priority === 'None' ? 'No priority' : t.priority} · {t.duration ? `${t.duration}m` : 'no duration'}
                           {t.due ? ` · due ${t.due.slice(0, 10)}` : ''}
                         </small>
-                        {t.reasons.length > 0 && <small>Why: {t.reasons.join(' · ')}</small>}
+                        {t.excludedReason && <small>{t.excludedReason}</small>}
+                        {!t.excludedReason && t.reasons.length > 0 && <small>Why: {t.reasons.join(' · ')}</small>}
                       </div>
                       <TaskLinks task={t} />
                     </li>
                   ))}
                 </ul>
               ) : (
-                <p className="muted">No tasks are Ready or In Progress in Notion.</p>
+                <p className="muted">No tasks match this filter.</p>
               )}
-              {parked.length > 0 && (
-                <details>
-                  <summary>Not actionable now ({parked.length})</summary>
-                  <ul className="plain">
-                    {parked.map((t) => (
-                      <li key={t.id} className="task">
-                        <div>
-                          <strong>{t.title}</strong>
-                          <small>{t.excludedReason}</small>
-                        </div>
-                        <TaskLinks task={t} />
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              )}
-            </section>
+            </details>
           </div>
         )}
 
-        <BlueprintPanel onSaved={() => regenerate(crypto.randomUUID())} />
+        <details className="panel">
+          <summary>Chat & task intake</summary>
+          <ChatPanel writes={writes} onChanged={load} />
+        </details>
+
+        <details className="panel">
+          <summary>Connections & scheduling</summary>
+          <section aria-labelledby="sources-title">
+            <h2 id="sources-title" className="visually-hidden">Connections</h2>
+            <ul className="conns">
+              <SourceRow name="Notion tasks" health={b?.sources.notion} fallback={conn?.notion === 'configured' ? 'pending' : 'not_connected'}>
+                {conn?.notion === 'not_configured' && !b && <p className="muted small">Set NOTION_TOKEN and NOTION_DATA_SOURCE_ID on the server.</p>}
+                {conn?.notion === 'configured' && writes && (
+                  <div className="row-actions">
+                    <span className="muted small">Task updates from chat: {writes === 'granted' ? 'On' : 'Off'}</span>
+                    <button type="button" className={writes === 'granted' ? 'ghost' : ''} onClick={toggleWrites} aria-pressed={writes === 'granted'}>
+                      {writes === 'granted' ? 'Turn off' : 'Turn on'}
+                    </button>
+                  </div>
+                )}
+              </SourceRow>
+              <SourceRow name="Google Calendar (read-only)" health={b && conn?.calendar.state !== 'not_connected' ? b.sources.calendar : undefined} fallback={calendarFallback}>
+                {conn?.calendar.state === 'connected' ? (
+                  <div className="row-actions">
+                    <span className="muted small">{conn.calendar.calendarCount} calendar(s)</span>
+                    <button type="button" className="ghost" onClick={disconnect}>Disconnect</button>
+                  </div>
+                ) : (
+                  <form method="post" action="/api/google/connect">
+                    <button type="submit">{conn?.calendar.state === 'revoked' ? 'Reconnect' : 'Connect'} Google Calendar</button>
+                  </form>
+                )}
+              </SourceRow>
+              <li className="conn">
+                <div>
+                  <strong>AI explanations</strong> <span className={`badge badge-${conn?.ai === 'enabled' ? 'connected' : 'not_connected'}`}>{conn?.ai === 'enabled' ? 'On' : 'Off'}</span>
+                  <p className="muted">{b?.ai.detail ?? (conn?.ai === 'enabled' ? 'Optional wording on top of the deterministic plan.' : 'Plans are deterministic; set OPENAI_API_KEY for optional explanations.')}</p>
+                </div>
+              </li>
+              <li className="conn">
+                <div>
+                  <strong>Scheduled briefing</strong>{' '}
+                  <span className={`badge badge-${conn?.scheduler.lastStatus === 'succeeded' ? 'connected' : conn?.scheduler.lastStatus === 'failed' ? 'error' : 'not_connected'}`}>
+                    {conn?.scheduler.lastRunAt ? (conn.scheduler.lastStatus === 'succeeded' ? 'Last run succeeded' : `Last run ${conn.scheduler.lastStatus}`) : 'No run recorded'}
+                  </span>
+                  <p className="muted">
+                    {conn?.scheduler.lastRunAt
+                      ? `A scheduler called Deevaa at ${stamp(conn.scheduler.lastRunAt)}.`
+                      : 'Nothing has triggered a nightly briefing yet. Scheduling is only active once the app is deployed and a cron call has succeeded.'}
+                  </p>
+                </div>
+              </li>
+            </ul>
+          </section>
+        </details>
+
+        <details className="panel blueprint" open>
+          <summary>Life Blueprint (saved on this device — not in Notion)</summary>
+          <BlueprintPanel onSaved={() => regenerate(crypto.randomUUID())} />
+        </details>
 
         <footer>
           Deevaa reads Google Calendar without changing it. It changes Notion tasks only when task updates are on, and only from what you tell it. It never sends messages, books, publishes or deletes, and it records a task as done only when you say so. Recommendations are suggestions for you to act on.

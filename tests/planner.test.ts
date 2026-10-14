@@ -73,15 +73,66 @@ describe('task eligibility', () => {
     expect(unlocked.find((t) => t.id === 'dep')!.executable).toBe(true);
   });
 
-  it('ranks by urgency, due date and readiness with explicit reasons', () => {
+  it('ranks by lane first, then urgency and due date', () => {
     const ranked = rankTasks(
-      [task({id: 'low', priority: 'Low'}), task({id: 'overdue', priority: 'Medium', due: '2026-10-12'}), task({id: 'urgent', priority: 'Urgent'})],
+      [task({id: 'low', priority: 'Low'}), task({id: 'overdue', priority: 'High', due: '2026-10-12'}), task({id: 'urgent', priority: 'Urgent'})],
       DATE
     );
-    expect(ranked.map((t) => t.id)).toEqual(['urgent', 'overdue', 'low']);
-    expect(ranked[1].reasons).toEqual(['Medium priority', 'overdue by 2 days']);
+    expect(ranked.map((t) => t.id)).toEqual(['overdue', 'urgent', 'low']);
+    expect(ranked[0].lane).toBe('Critical');
+    expect(ranked[1].lane).toBe('Important');
     const sameDay = rankTasks([task({id: 'later', priority: 'High', due: '2026-10-20'}), task({id: 'today', priority: 'High', due: DATE})], DATE);
     expect(sameDay[0].id).toBe('today');
+    expect(sameDay[0].lane).toBe('Critical');
+  });
+});
+
+describe('v0.4 decision intelligence', () => {
+  it('A: High due in 2 days outranks Low due next month with correct lanes', () => {
+    const ranked = rankTasks(
+      [task({id: 'soon', priority: 'High', due: '2026-10-16'}), task({id: 'later', priority: 'Low', due: '2026-11-14'})],
+      DATE
+    );
+    expect(ranked[0].id).toBe('soon');
+    expect(ranked[0].lane).toBe('Critical');
+    expect(ranked[1].lane).toBe('Important');
+  });
+
+  it('B: Urgent EB-1A work without a due date stays Important, not Critical or radar due warnings', () => {
+    const tasks = [task({id: 'eb1', title: 'Draft EB-1A evidence packet', priority: 'Urgent'})];
+    const bp = {...emptyBlueprint(), activeProjects: ['EB-1A petition']};
+    const ranked = rankTasks(tasks, DATE, bp);
+    expect(ranked[0].lane).toBe('Important');
+    const b = buildBriefing({date: DATE, now: NIGHT_BEFORE, tasks, events: [], notion: connected(1), calendar: connected()});
+    expect(b.topOutcomes[0]?.task.id).toBe('eb1');
+    expect(b.radar?.filter((r) => r.kind === 'overdue' || r.kind === 'due_soon')).toEqual([]);
+  });
+
+  it('C: Waiting PR review is excluded from top outcomes and blocks', () => {
+    const tasks = [task({id: 'wait', title: 'PR review', status: 'Waiting', priority: 'High'}), task({id: 'ready', title: 'Ship fix', priority: 'Medium'})];
+    const b = plan(tasks);
+    expect(b.topOutcomes.map((o) => o.task.id)).not.toContain('wait');
+    expect(b.blocks.map((x) => x.task?.id)).not.toContain('wait');
+    expect(b.waiting?.map((t) => t.id)).toContain('wait');
+  });
+
+  it('D: verify citation deadline with no due stays Verify lane and due null', () => {
+    const tasks = [task({id: 'v', title: 'Verify citation deadline', due: null, status: 'Ready'})];
+    const ranked = rankTasks(tasks, DATE);
+    expect(ranked[0].lane).toBe('Verify');
+    expect(ranked[0].due).toBeNull();
+    const b = plan(tasks);
+    expect(b.radar?.some((r) => r.kind === 'verify_deadline' && r.task.id === 'v')).toBe(true);
+    expect(b.topOutcomes.map((o) => o.task.id)).not.toContain('v');
+  });
+
+  it('builds agent work and DoD summary from the snapshot', () => {
+    const tasks = [task({id: 'a', priority: 'High', due: DATE}), task({id: 'w', status: 'Waiting', title: 'Waiting on legal'})];
+    const b = plan(tasks);
+    expect(b.agentWork?.some((a) => a.agent === 'Chief of Staff' && a.status === 'Prepared')).toBe(true);
+    expect(b.topOutcomes[0].nextAction).toMatch(/Notion/);
+    expect(b.summary).toMatch(/Top priority/);
+    expect(b.summary).toMatch(/waiting/i);
   });
 });
 

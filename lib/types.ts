@@ -1,4 +1,4 @@
-export const BRIEFING_VERSION = 2;
+export const BRIEFING_VERSION = 3;
 export const TIMEZONE = 'America/Los_Angeles';
 
 export type TaskStatus =
@@ -13,6 +13,26 @@ export type TaskStatus =
   | 'Needs Verification';
 
 export type Priority = 'Urgent' | 'High' | 'Medium' | 'Low' | 'None';
+
+export type DecisionLane =
+  | 'Critical'
+  | 'Due soon'
+  | 'Important'
+  | 'Scheduled'
+  | 'Verify'
+  | 'Someday'
+  | 'Waiting'
+  | 'Blocked'
+  | 'Completed';
+
+export type AgentWorkStatus = 'Prepared' | 'Needs approval' | 'Waiting' | 'Failed' | 'Completed';
+
+export type AgentDeliverable = {
+  agent: 'Chief of Staff' | 'Project Manager' | 'Career & Research';
+  status: AgentWorkStatus;
+  summary: string;
+  taskIds: string[];
+};
 export type Energy = 'Low' | 'Medium' | 'High';
 export type Context = 'Anywhere' | 'Phone' | 'Laptop' | 'Home';
 
@@ -70,7 +90,7 @@ export type TaskRef = Pick<Task, 'id' | 'title' | 'status' | 'priority' | 'due' 
 };
 
 export type RadarItem = {
-  kind: 'overdue' | 'due_soon' | 'stale_waiting' | 'blocked_deadline';
+  kind: 'overdue' | 'due_soon' | 'stale_waiting' | 'blocked_deadline' | 'verify_deadline';
   task: TaskRef;
   detail: string;
 };
@@ -86,6 +106,7 @@ export type Block = {
 };
 
 export type RankedTask = TaskRef & {
+  lane: DecisionLane;
   score: number;
   reasons: string[];
   executable: boolean;
@@ -104,7 +125,7 @@ export type BriefingSnapshot = {
   summary: string;
   sources: {notion: SourceHealth; calendar: SourceHealth};
   warnings: string[];
-  topOutcomes: {task: TaskRef; reasons: string[]; aiNote?: string}[];
+  topOutcomes: {task: TaskRef; reasons: string[]; nextAction: string; lane: DecisionLane; aiNote?: string}[];
   blocks: Block[];
   tasks: RankedTask[];
   events: CalendarEvent[];
@@ -112,4 +133,8 @@ export type BriefingSnapshot = {
   ai: {status: 'disabled' | 'applied' | 'rejected' | 'failed'; detail: string | null};
   /** Deadline and follow-up signals. Absent on snapshots stored before it existed. */
   radar?: RadarItem[];
+  /** Waiting on others; no action until they reply. Absent on older snapshots. */
+  waiting?: RankedTask[];
+  /** Derived from this snapshot only — not a simulated agent run log. */
+  agentWork?: AgentDeliverable[];
 };

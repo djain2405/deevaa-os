@@ -1,5 +1,6 @@
 import {DateTime} from 'luxon';
 import {alignment, type Blueprint} from './blueprint';
+import {assignLane, careerResearchTasks, laneRank, recommendNextAction} from './decision';
 import {atLocal, daysUntil, formatLocalTime, localDate} from './time';
 import {
   BRIEFING_VERSION,
@@ -8,6 +9,8 @@ import {
   type BriefingSnapshot,
   type CalendarEvent,
   type Interval,
+  type AgentDeliverable,
+  type DecisionLane,
   type RadarItem,
   type RankedTask,
   type SourceHealth,
@@ -93,16 +96,75 @@ export function rankTasks(tasks: Task[], date: string, blueprint: Blueprint | nu
     const fit = alignment(t, blueprint);
     if (fit) (score += fit.bonus), reasons.push(fit.reason);
     const excludedReason = exclusion(t, byId);
-    return {...toRef(t), context: t.context, energy: t.energy, score, reasons, executable: excludedReason === null, excludedReason};
+    const lane = assignLane({task: t, date, blueprint, byId, tasks, unblocks: n});
+    if (lane !== 'Completed' && lane !== 'Waiting' && lane !== 'Blocked' && lane !== 'Someday' && lane !== 'Verify') {
+      reasons.unshift(`${lane} lane`);
+    } else if (lane === 'Verify') reasons.unshift('Verify lane — deadline uncertain');
+    return {...toRef(t), lane, context: t.context, energy: t.energy, score, reasons, executable: excludedReason === null, excludedReason};
   });
   return ranked.sort(
     (a, b) =>
-      Number(b.executable) - Number(a.executable) ||
+      laneRank(a.lane) - laneRank(b.lane) ||
       b.score - a.score ||
       (a.due ?? '9999').localeCompare(b.due ?? '9999') ||
       (a.duration ?? 9999) - (b.duration ?? 9999) ||
       a.title.localeCompare(b.title)
   );
+}
+
+const EXECUTABLE_LANES = new Set<DecisionLane>(['Critical', 'Due soon', 'Important', 'Scheduled']);
+
+export function applyScheduledLanes(ranked: RankedTask[], blocks: Block[]): RankedTask[] {
+  const scheduledIds = new Set(blocks.filter((b) => b.state === 'scheduled' && b.task).map((b) => b.task!.id));
+  if (!scheduledIds.size) return ranked;
+  return ranked.map((t) => {
+    if (!scheduledIds.has(t.id) || !t.executable || t.lane === 'Critical' || t.lane === 'Due soon' || t.lane === 'Verify') return t;
+    const reasons = t.reasons.includes('Scheduled lane') ? t.reasons : ['Scheduled lane', ...t.reasons.filter((r) => !r.endsWith(' lane') && r !== 'Verify lane — deadline uncertain')];
+    return {...t, lane: 'Scheduled' as DecisionLane, reasons};
+  });
+}
+
+function verifyRadarItems(ranked: RankedTask[]): RadarItem[] {
+  return ranked
+    .filter((t) => t.lane === 'Verify')
+    .map((t) => ({
+      kind: 'verify_deadline' as const,
+      task: toRef(t),
+      detail: t.excludedReason ?? 'Deadline is not set in Notion; verify before acting.'
+    }));
+}
+
+function buildAgentWork(top: RankedTask[], radar: RadarItem[], ranked: RankedTask[], tasks: Task[], blueprint: Blueprint | null): AgentDeliverable[] {
+  const out: AgentDeliverable[] = [];
+  if (top.length) {
+    out.push({
+      agent: 'Chief of Staff',
+      status: 'Prepared',
+      summary: `Top ${top.length} priorit${top.length === 1 ? 'y' : 'ies'}: ${top.map((t) => `“${t.title}”`).join(', ')}.`,
+      taskIds: top.map((t) => t.id)
+    });
+  }
+  if (radar.length) {
+    out.push({
+      agent: 'Project Manager',
+      status: 'Prepared',
+      summary: `${radar.length} attention signal${radar.length === 1 ? '' : 's'} (deadlines, blocked work, stale waiting, uncertain deadlines).`,
+      taskIds: radar.map((r) => r.task.id)
+    });
+  }
+  const career = careerResearchTasks(tasks, blueprint).filter((t) => {
+    const r = ranked.find((x) => x.id === t.id);
+    return r && EXECUTABLE_LANES.has(r.lane);
+  });
+  if (career.length) {
+    out.push({
+      agent: 'Career & Research',
+      status: 'Prepared',
+      summary: `${career.length} grounded task${career.length === 1 ? '' : 's'} aligned with career / petition priorities.`,
+      taskIds: career.map((t) => t.id)
+    });
+  }
+  return out;
 }
 
 type Gap = {start: DateTime; end: DateTime};
@@ -159,7 +221,7 @@ class Allocator {
 const window = (slot: Interval) => `${formatLocalTime(slot.start)}–${formatLocalTime(slot.end)}`;
 
 export function planBlocks(ranked: RankedTask[], gaps: Gap[] | null): Block[] {
-  const ready = ranked.filter((t) => t.executable);
+  const ready = ranked.filter((t) => t.executable && t.lane !== 'Verify');
   const used = new Set<string>();
   const freeTotal = gaps ? gaps.reduce((s, g) => s + minutes(g), 0) : 0;
   const alloc = gaps ? new Allocator(gaps.map((g) => ({...g})), Math.floor(freeTotal * MAX_PLANNED_SHARE)) : null;
@@ -285,7 +347,7 @@ export function buildBriefing(input: PlanInput): BriefingSnapshot {
   if (input.calendar.state === 'not_connected') warnings.unshift('Google Calendar is not connected, so Deevaa does not claim any free time.');
   if (input.date < localDate(now)) warnings.push('This briefing is for a past date.');
 
-  const ranked = notionOk ? rankTasks(input.tasks, input.date, input.blueprint ?? null) : [];
+  let ranked = notionOk ? rankTasks(input.tasks, input.date, input.blueprint ?? null) : [];
   const gaps = calendarOk ? freeWindows(input.date, input.events, now) : null;
   const blocks: Block[] = notionOk
     ? planBlocks(ranked, gaps)
@@ -297,9 +359,30 @@ export function buildBriefing(input: PlanInput): BriefingSnapshot {
         end: null,
         reason: 'No valid Notion task data, so no recommendation is made.'
       }));
+  const byId = new Map(input.tasks.map((t) => [t.id, t]));
+  const ready = ranked.filter((t) => t.executable && EXECUTABLE_LANES.has(t.lane));
+  const topOutcomes = ready.slice(0, 3).map((t) => ({
+    task: toRef(t),
+    reasons: t.reasons,
+    lane: t.lane,
+    nextAction: recommendNextAction(byId.get(t.id) ?? ({...t, nextAction: null, blocker: null, blockedBy: [], rawStatus: null, externalKey: null, lastEditedAt: '', context: t.context, energy: t.energy} as Task), t.lane)
+  }));
+  const waiting = ranked.filter((t) => t.lane === 'Waiting');
+  const radarBase = notionOk ? buildRadar(ranked, input.tasks, input.date) : [];
+  const radar = notionOk ? [...radarBase, ...verifyRadarItems(ranked)] : [];
+  const agentWork = notionOk ? buildAgentWork(topOutcomes.map((o) => ranked.find((t) => t.id === o.task.id)!), radar, ranked, input.tasks, input.blueprint ?? null) : [];
 
-  const ready = ranked.filter((t) => t.executable);
-  const topOutcomes = ready.slice(0, 3).map((t) => ({task: toRef(t), reasons: t.reasons}));
+  if (notionOk) {
+    ranked = applyScheduledLanes(ranked, blocks);
+    ranked = [...ranked].sort(
+      (a, b) =>
+        laneRank(a.lane) - laneRank(b.lane) ||
+        b.score - a.score ||
+        (a.due ?? '9999').localeCompare(b.due ?? '9999') ||
+        (a.duration ?? 9999) - (b.duration ?? 9999) ||
+        a.title.localeCompare(b.title)
+    );
+  }
   const freeMinutes = gaps ? Math.round(gaps.reduce((s, g) => s + minutes(g), 0)) : null;
   const busyMinutes = calendarOk
     ? Math.round(
@@ -313,13 +396,16 @@ export function buildBriefing(input: PlanInput): BriefingSnapshot {
     input.notion.state === 'not_connected' ? 'unavailable' : notionOk && calendarOk ? 'complete' : 'partial';
 
   const scheduled = blocks.filter((b) => b.state === 'scheduled').length;
+  const omitted = blocks.filter((b) => b.state === 'omitted').length;
+  const attentionCount = radar.length;
   const summary = !notionOk
     ? 'No grounded plan is available because Notion task data is missing.'
     : [
-        `${ready.length} ready task${ready.length === 1 ? '' : 's'}, ${ranked.length - ready.length} not actionable now.`,
-        freeMinutes === null ? 'Free time is unknown.' : `${Math.floor(freeMinutes / 60)}h ${freeMinutes % 60}m open between commitments.`,
-        gaps ? `${scheduled} of 4 blocks fit.` : '',
-        topOutcomes[0] ? `Start with “${topOutcomes[0].task.title}”.` : ''
+        attentionCount ? `${attentionCount} item${attentionCount === 1 ? '' : 's'} need attention.` : 'No deadline warnings right now.',
+        topOutcomes[0] ? `Top priority: “${topOutcomes[0].task.title}” (${topOutcomes[0].lane}).` : 'No executable priorities ranked yet.',
+        waiting.length ? `${waiting.length} waiting on others — no action from you until they reply.` : '',
+        gaps && omitted === 4 ? 'All four blocks omitted because the day is full or sources are partial.' : gaps ? `${scheduled} of 4 blocks fit; ${omitted} skipped.` : '',
+        freeMinutes === null ? '' : `${Math.floor(freeMinutes / 60)}h ${freeMinutes % 60}m open between commitments.`
       ]
         .filter(Boolean)
         .join(' ');
@@ -335,7 +421,9 @@ export function buildBriefing(input: PlanInput): BriefingSnapshot {
     warnings,
     topOutcomes,
     blocks,
-    radar: notionOk ? buildRadar(ranked, input.tasks, input.date) : [],
+    radar,
+    waiting,
+    agentWork,
     tasks: ranked,
     events: calendarOk ? input.events : [],
     capacity: {

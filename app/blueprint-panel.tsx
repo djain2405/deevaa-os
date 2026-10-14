@@ -36,10 +36,19 @@ export function BlueprintPanel({onSaved}: {onSaved: () => void}) {
   const [importPreview, setImportPreview] = useState<PreviewResponse | null>(null);
   const [importTasks, setImportTasks] = useState<ImportTask[]>([]);
   const [importBusy, setImportBusy] = useState(false);
+  const [loadError, setLoadError] = useState('');
 
   const load = useCallback(async () => {
+    setLoadError('');
     const res = await fetch('/api/blueprint', {cache: 'no-store'});
-    if (!res.ok) return;
+    if (res.status === 401) {
+      window.location.href = '/login';
+      return;
+    }
+    if (!res.ok) {
+      setLoadError('Could not load your Life Blueprint. Try refreshing the page.');
+      return;
+    }
     const body: View = await res.json();
     setView(body);
     setDraft(toText(body.data));
@@ -124,7 +133,14 @@ export function BlueprintPanel({onSaved}: {onSaved: () => void}) {
     setMessage('Import canceled. Nothing was written.');
   }
 
-  if (!view || !draft) return null;
+  if (!view || !draft) {
+    return (
+      <section className="panel blueprint" aria-labelledby="blueprint-title">
+        <h2 id="blueprint-title">Life Blueprint</h2>
+        <p className="muted">{loadError || 'Loading your Blueprint…'}</p>
+      </section>
+    );
+  }
   const filled = BLUEPRINT_FIELDS.filter((f) => view.data[f.key].length).length;
   const pv = importPreview?.preview;
 
@@ -229,8 +245,8 @@ export function BlueprintPanel({onSaved}: {onSaved: () => void}) {
         </>
       )}
 
-      <details>
-        <summary>Edit Blueprint manually</summary>
+      <details open={filled > 0}>
+        <summary>Edit Blueprint manually ({filled} section{filled === 1 ? '' : 's'} filled)</summary>
         {BLUEPRINT_FIELDS.map((f) => (
           <label key={f.key}>
             {f.label} <span className="muted">· {f.hint}</span>

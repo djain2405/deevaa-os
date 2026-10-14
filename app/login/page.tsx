@@ -9,6 +9,7 @@ export default async function Login({searchParams}: {searchParams: Promise<{erro
   const {error, callbackUrl} = await searchParams;
   const target = callbackUrl?.startsWith('/') && !callbackUrl.startsWith('//') ? callbackUrl : '/';
   const configured = Boolean(process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET && process.env.AUTH_SECRET && process.env.ALLOWED_EMAIL);
+  const ownerEmail = process.env.ALLOWED_EMAIL?.trim();
 
   return (
     <main className="login">
@@ -16,7 +17,9 @@ export default async function Login({searchParams}: {searchParams: Promise<{erro
         ✦ <strong>Deevaa OS</strong>
       </div>
       <h1>Sign in to your briefing</h1>
-      <p className="muted">Deevaa is private to one owner account. Signing in shares only your name and email with this app; calendar access is requested separately.</p>
+      <p className="muted">
+        Deevaa is private to one owner account{ownerEmail ? ` (${ownerEmail})` : ''}. Signing in shares only your name and email with this app; calendar access is requested separately.
+      </p>
       {configured ? (
         <form
           action={async () => {
@@ -35,7 +38,7 @@ export default async function Login({searchParams}: {searchParams: Promise<{erro
       )}
       {error && (
         <p className="warning" role="alert">
-          Sign-in was not allowed. Only the configured owner account with a verified email can use Deevaa.
+          Sign-in was not allowed. Use the Google account{ownerEmail ? ` ${ownerEmail}` : ''} with a verified email, or pick that account on the Google chooser if you use several.
         </p>
       )}
     </main>
