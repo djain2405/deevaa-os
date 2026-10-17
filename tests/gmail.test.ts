@@ -6,7 +6,9 @@ vi.mock('@/lib/session', () => ({getSessionUser: vi.fn(async () => session.user)
 import {GET as gmailCallback} from '@/app/api/google/gmail/callback/route';
 import {POST as gmailConnect} from '@/app/api/google/gmail/connect/route';
 import {POST as gmailJob} from '@/app/api/jobs/gmail/route';
+import {POST as gmailItem} from '@/app/api/jobs/gmail/item/route';
 import {applyEmailDigest, mergeEmailDigest} from '@/lib/briefing-merge';
+import {hideEmailItem, saveEmailItemToNotion} from '@/lib/email-items';
 import {decryptSecret, encryptSecret, signState} from '@/lib/crypto';
 import {extractDigest, extractWithRules, groundModelOutput} from '@/lib/gmail-extract';
 import {
@@ -15,10 +17,12 @@ import {
   GMAIL_PROVIDER,
   GMAIL_QUERY,
   GMAIL_SCOPE,
+  gmailPermalink,
   scopeIsGmailReadOnly
 } from '@/lib/google-gmail';
 import {getBriefing, getCredential, getOrCreateUser, saveCredential, upsertBriefing} from '@/lib/store';
-import {BRIEFING_VERSION, type BriefingSnapshot} from '@/lib/types';
+import {localDate} from '@/lib/time';
+import {BRIEFING_VERSION, type BriefingSnapshot, type Task} from '@/lib/types';
 import {freshDb, json, mockFetch} from './helpers';
 
 const fast = {retryDelayMs: 0};
@@ -43,7 +47,8 @@ function msg(id: string, fields: {subject: string; from?: string; snippet?: stri
     from: fields.from ?? 'Ada <ada@example.com>',
     snippet: fields.snippet ?? '',
     excerpt: fields.excerpt ?? '',
-    labelIds: fields.labelIds ?? ['INBOX']
+    labelIds: fields.labelIds ?? ['INBOX'],
+    internalDate: Date.parse('2026-10-14T13:00:00Z')
   };
 }
 
@@ -101,6 +106,23 @@ describe('grounded extraction', () => {
     expect(out.summaries.map((s) => s.subject)).toEqual(['Visa interview confirmation']);
   });
 
+  it('drops receipts and shipping unless a remaining deadline is quoted', () => {
+    const out = extractWithRules(
+      [
+        msg('receipt', {subject: 'Your receipt from Store', snippet: 'Thank you for your payment of $42 today.'}),
+        msg('ship', {subject: 'Your order has shipped', snippet: 'Tracking number 1Z999. Out for delivery tomorrow.'}),
+        msg('thanks', {subject: 'Thanks for your payment', snippet: 'We received your payment. This is a receipt.'}),
+        msg('bill', {subject: 'Invoice due Friday', snippet: 'This invoice is due Friday. Please pay.'}),
+        msg('renew', {subject: 'Receipt — payment due October 20', snippet: 'Your receipt. Payment due October 20 to keep the subscription.'})
+      ],
+      now
+    );
+    expect(out.actions.map((a) => a.title)).toEqual(['Invoice due Friday', 'Receipt — payment due October 20']);
+    expect(out.actions[0].due).toBe('2026-10-16');
+    expect(out.actions[1].due).toBe('2026-10-20');
+    expect(out.summaries).toEqual([]);
+  });
+
   it('drops schema-invalid model output and ungrounded or invented deadlines', () => {
     const messages = [msg('m1', {subject: 'Please RSVP by Friday', snippet: 'Please RSVP by Friday if you can attend.'})];
     expect(groundModelOutput({nope: true}, messages, now).dropped).toBe(-1);
@@ -113,7 +135,7 @@ describe('grounded extraction', () => {
       now
     );
     expect(invented.actions).toHaveLength(1);
-    expect(invented.actions[0].due).toBeNull();
+    expect(invented.actions[0].due).toBe('2026-10-16');
     expect(invented.summaries).toHaveLength(0);
     expect(invented.dropped).toBe(1);
   });
@@ -270,5 +292,107 @@ describe('manual Gmail digest', () => {
     expect(body.outcome).toBe('created');
     expect(body.briefing.emailDigest.status).toBe('unavailable');
     expect(body.briefing.emailDigest.actions).toEqual([]);
+  });
+});
+
+describe('email item decisions', () => {
+  const permalink = gmailPermalink('thread-invoice');
+
+  async function seedDigest() {
+    const date = localDate();
+    await upsertBriefing({
+      userId,
+      localDate: date,
+      version: BRIEFING_VERSION,
+      status: 'partial',
+      runId: '00000000-0000-4000-8000-000000000010',
+      generatedAt: new Date(),
+      snapshot: {
+        version: BRIEFING_VERSION,
+        date,
+        timezone: 'America/Los_Angeles',
+        generatedAt: new Date().toISOString(),
+        status: 'partial',
+        summary: 'digest',
+        sources: {
+          notion: {state: 'not_connected', message: '', lastSyncedAt: null, count: 0, warnings: []},
+          calendar: {state: 'not_connected', message: '', lastSyncedAt: null, count: 0, warnings: []}
+        },
+        warnings: [],
+        topOutcomes: [],
+        blocks: [],
+        tasks: [],
+        events: [],
+        capacity: {known: false, freeMinutes: null, busyMinutes: null, freeWindows: []},
+        ai: {status: 'disabled', detail: null},
+        emailDigest: {
+          status: 'complete',
+          generatedAt: new Date().toISOString(),
+          actions: [
+            {title: 'Invoice due Friday', due: '2026-10-16', why: 'due', permalink, evidence: 'due Friday'}
+          ],
+          summaries: [],
+          warnings: []
+        }
+      }
+    });
+  }
+
+  it('hides an item from today’s digest', async () => {
+    await seedDigest();
+    const hidden = await hideEmailItem(userId, permalink);
+    expect(hidden.kind).toBe('hidden');
+    const res = await gmailItem(
+      new Request('http://localhost:3000/api/jobs/gmail/item', {
+        method: 'POST',
+        headers: {origin: 'http://localhost:3000', 'content-type': 'application/json'},
+        body: JSON.stringify({permalink, action: 'hide'})
+      })
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it('creates a Notion task with the quoted due date when saving', async () => {
+    await seedDigest();
+    const task = {
+      id: 'notion-1',
+      title: 'Invoice due Friday',
+      status: 'Ready',
+      rawStatus: 'Ready',
+      priority: 'None',
+      due: '2026-10-16',
+      duration: null,
+      context: 'Anywhere',
+      energy: 'Low',
+      blocker: null,
+      blockedBy: [],
+      externalKey: 'deevaa:gmail:thread-invoice',
+      project: null,
+      nextAction: 'due',
+      url: 'https://www.notion.so/invoice',
+      sourceLink: permalink,
+      source: 'notion',
+      lastEditedAt: new Date().toISOString()
+    } as Task;
+    const result = await saveEmailItemToNotion(userId, permalink, {
+      hasPermission: async () => true,
+      loadWriteTarget: async () => ({token: 't', dataSourceId: 'ds', titleProperty: 'Name', props: {}}),
+      findByExternalKey: async () => null,
+      createTask: async (_target, fields) => {
+        expect(fields.title).toBe('Invoice due Friday');
+        expect(fields.due).toBe('2026-10-16');
+        expect(fields.sourceLink).toBe(permalink);
+        expect(fields.externalKey).toBe('deevaa:gmail:thread-invoice');
+        return {task, skipped: []};
+      }
+    });
+    expect(result.created).toBe(true);
+    expect(result.item.kind).toBe('saved');
+    expect(result.item.pageUrl).toBe('https://www.notion.so/invoice');
+  });
+
+  it('refuses to save when Notion writes are off', async () => {
+    await seedDigest();
+    await expect(saveEmailItemToNotion(userId, permalink, {hasPermission: async () => false})).rejects.toMatchObject({code: 'writes_off'});
   });
 });

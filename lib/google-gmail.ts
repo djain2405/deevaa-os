@@ -7,8 +7,9 @@ import type {SourceHealth} from './types';
 export const GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
 export const GMAIL_PROVIDER = 'google_gmail';
 export const GMAIL_STATE_COOKIE = 'deevaa_gmail_nonce';
-export const GMAIL_QUERY = 'in:inbox newer_than:1d -category:promotions -category:social';
+export const GMAIL_QUERY = 'in:inbox newer_than:24h -category:promotions -category:social';
 export const MAX_MESSAGES = 40;
+export const SCAN_WINDOW_MS = 24 * 60 * 60 * 1000;
 const SKIP_LABELS = new Set(['CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL']);
 
 export class GmailError extends Error {
@@ -125,6 +126,7 @@ export type GmailMessage = {
   snippet: string;
   excerpt: string;
   labelIds: string[];
+  internalDate: number | null;
 };
 
 function header(headers: {name?: string; value?: string}[] | undefined, name: string) {
@@ -167,6 +169,7 @@ function parseMessage(raw: {
   threadId?: string;
   snippet?: string;
   labelIds?: string[];
+  internalDate?: string | number;
   payload?: Payload;
 }): GmailMessage | null {
   if (!raw.id || !raw.threadId) return null;
@@ -174,6 +177,7 @@ function parseMessage(raw: {
   const headers = raw.payload?.headers;
   const snippet = (raw.snippet ?? '').slice(0, 300);
   const excerpt = snippet ? '' : textPlain(raw.payload);
+  const internalDate = raw.internalDate != null ? Number(raw.internalDate) : null;
   return {
     id: raw.id,
     threadId: raw.threadId,
@@ -181,7 +185,8 @@ function parseMessage(raw: {
     from: header(headers, 'From').slice(0, 200),
     snippet,
     excerpt: excerpt.slice(0, 1500),
-    labelIds: raw.labelIds ?? []
+    labelIds: raw.labelIds ?? [],
+    internalDate: Number.isFinite(internalDate) ? internalDate : null
   };
 }
 
@@ -202,7 +207,7 @@ async function listIds(accessToken: string, opts: FetchOptions) {
 async function getMessage(accessToken: string, id: string, opts: FetchOptions) {
   const q = new URLSearchParams({
     format: 'full',
-    fields: 'id,threadId,labelIds,snippet,payload/mimeType,payload/headers,payload/body/data,payload/parts'
+    fields: 'id,threadId,labelIds,snippet,internalDate,payload/mimeType,payload/headers,payload/body/data,payload/parts'
   });
   const res = await providerFetch(
     'gmail.messages.get',
@@ -259,7 +264,7 @@ export async function fetchGmailMessages(
     for (const row of ids) {
       try {
         const parsed = parseMessage(await getMessage(access_token, row.id, opts));
-        if (parsed) messages.push(parsed);
+        if (parsed && (parsed.internalDate == null || parsed.internalDate >= Date.now() - SCAN_WINDOW_MS)) messages.push(parsed);
       } catch (e) {
         if (e instanceof GmailError && e.kind === 'revoked') throw e;
         failed++;
@@ -267,7 +272,7 @@ export async function fetchGmailMessages(
     }
     if (ids.length && failed === ids.length) throw new GmailError('unavailable', 'Gmail could not be read.');
     if (failed) warnings.push('Some messages could not be read; the digest may be incomplete.');
-    if (ids.length === MAX_MESSAGES) warnings.push('Inbox scan stopped at 40 recent messages.');
+    if (ids.length === MAX_MESSAGES) warnings.push('Stopped after the 40 most recent messages from the last 24 hours.');
     return {
       messages,
       health: {

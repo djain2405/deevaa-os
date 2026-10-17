@@ -8,12 +8,14 @@ import {ACTION_WINDOWS, CONTEXTS, ENERGY_LEVELS, findNextAction, type Feedback, 
 import type {AgentDeliverable, Block, BriefingSnapshot, Context, DecisionLane, Energy, RadarItem, RankedTask, SourceHealth, TaskRef} from '@/lib/types';
 
 type RunView = {id: string; trigger: string; status: string; errorCode: string | null; startedAt: string; finishedAt: string | null};
+type EmailItemState = {permalink: string; kind: 'hidden' | 'saved'; pageUrl: string | null};
 type Payload = {
   date: string;
   today: string;
   briefing: (BriefingSnapshot & {updatedAt: string}) | null;
   lastRun: RunView | null;
   connections: Connections;
+  emailItems: EmailItemState[];
   feedback: Feedback[];
   warnings: string[];
 };
@@ -201,6 +203,7 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [gmailBusy, setGmailBusy] = useState(false);
+  const [emailActing, setEmailActing] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [minutes, setMinutes] = useState<number>(10);
@@ -323,6 +326,33 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
     await load();
   }
 
+  async function actOnEmail(permalink: string, action: 'hide' | 'save') {
+    setEmailActing(`${action}:${permalink}`);
+    setError('');
+    try {
+      const res = await fetch('/api/jobs/gmail/item', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({permalink, action})
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(body?.error?.message ?? 'Could not update that email item.');
+        return;
+      }
+      setNotice(
+        action === 'hide'
+          ? 'Hidden. It will stay off the digest unless you reconnect a new copy of that thread.'
+          : body?.created
+            ? 'Added to Notion as a Ready task with the quoted due date, if any.'
+            : 'Already tracked in Notion.'
+      );
+      await load();
+    } finally {
+      setEmailActing(null);
+    }
+  }
+
   async function runGmailDigest() {
     setGmailBusy(true);
     setError('');
@@ -409,6 +439,9 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
   const calendarFallback = conn?.calendar.state === 'revoked' ? 'error' : conn?.calendar.state === 'connected' ? 'pending' : 'not_connected';
   const gmailFallback = conn?.gmail.state === 'revoked' ? 'error' : conn?.gmail.state === 'connected' ? 'pending' : 'not_connected';
   const digest = b?.emailDigest;
+  const emailState = new Map((data?.emailItems ?? []).map((i) => [i.permalink, i]));
+  const visibleActions = (digest?.actions ?? []).filter((a) => emailState.get(a.permalink)?.kind !== 'hidden');
+  const visibleSummaries = (digest?.summaries ?? []).filter((s) => emailState.get(s.permalink)?.kind !== 'hidden');
 
   function skipTop(taskId: string) {
     setTopSkipped((prev) => (prev.includes(taskId) ? prev : [...prev, taskId]));
@@ -480,54 +513,95 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
             {digest && digest.status !== 'unavailable' && (
               <>
                 <p className="muted">
-                  Scanned this morning at {stamp(digest.generatedAt)}. Links open Gmail. Deevaa does not send, reply, or create Notion tasks from mail.
+                  Last 24 hours, scanned {stamp(digest.generatedAt)}. Receipts and shipping mail are skipped unless a remaining deadline is quoted. Not important hides an item. Add to Notion creates a Ready task (needs task updates on).
                 </p>
-                {digest.actions.length > 0 && (
+                {visibleActions.length > 0 && (
                   <>
                     <h2 className="space" id="email-actions-title">Time-sensitive</h2>
                     <ul className="plain">
-                      {digest.actions.map((a) => (
-                        <li className="task" key={a.permalink + a.title}>
-                          <div>
-                            <strong>
-                              <a href={a.permalink} target="_blank" rel="noreferrer">
-                                {a.title}
-                              </a>
-                            </strong>
-                            <small>
-                              {a.due ? `Due ${a.due}. ` : ''}
-                              {a.why}
-                            </small>
-                            <small className="muted">“{a.evidence}”</small>
-                          </div>
-                        </li>
-                      ))}
+                      {visibleActions.map((a) => {
+                        const saved = emailState.get(a.permalink);
+                        return (
+                          <li className="task" key={a.permalink + a.title}>
+                            <div>
+                              <strong>
+                                <a href={a.permalink} target="_blank" rel="noreferrer">
+                                  {a.title}
+                                </a>
+                              </strong>
+                              <small>
+                                {a.due ? `Due ${a.due}. ` : ''}
+                                {a.why}
+                              </small>
+                              <small className="muted">“{a.evidence}”</small>
+                              {saved?.kind === 'saved' && saved.pageUrl ? (
+                                <span className="links">
+                                  <a href={saved.pageUrl} target="_blank" rel="noreferrer">
+                                    Open in Notion
+                                  </a>
+                                </span>
+                              ) : (
+                                <div className="feedback" role="group" aria-label={`Actions for ${a.title}`}>
+                                  <button type="button" className="ghost" onClick={() => actOnEmail(a.permalink, 'hide')} disabled={!!emailActing}>
+                                    Not important
+                                  </button>
+                                  <button type="button" onClick={() => actOnEmail(a.permalink, 'save')} disabled={!!emailActing || writes !== 'granted'} aria-busy={emailActing === `save:${a.permalink}`}>
+                                    {emailActing === `save:${a.permalink}` ? 'Adding…' : 'Add to Notion'}
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </li>
+                        );
+                      })}
                     </ul>
                   </>
                 )}
-                {digest.summaries.length > 0 && (
+                {visibleSummaries.length > 0 && (
                   <>
                     <h2 className="space" id="email-miss-title">Do not miss</h2>
                     <ul className="plain">
-                      {digest.summaries.map((s) => (
-                        <li className="task" key={s.permalink + s.subject}>
-                          <div>
-                            <strong>
-                              <a href={s.permalink} target="_blank" rel="noreferrer">
-                                {s.subject}
-                              </a>
-                            </strong>
-                            <small>
-                              {s.from} — {s.why}
-                            </small>
-                          </div>
-                        </li>
-                      ))}
+                      {visibleSummaries.map((s) => {
+                        const saved = emailState.get(s.permalink);
+                        return (
+                          <li className="task" key={s.permalink + s.subject}>
+                            <div>
+                              <strong>
+                                <a href={s.permalink} target="_blank" rel="noreferrer">
+                                  {s.subject}
+                                </a>
+                              </strong>
+                              <small>
+                                {s.from} — {s.why}
+                              </small>
+                              {saved?.kind === 'saved' && saved.pageUrl ? (
+                                <span className="links">
+                                  <a href={saved.pageUrl} target="_blank" rel="noreferrer">
+                                    Open in Notion
+                                  </a>
+                                </span>
+                              ) : (
+                                <div className="feedback" role="group" aria-label={`Actions for ${s.subject}`}>
+                                  <button type="button" className="ghost" onClick={() => actOnEmail(s.permalink, 'hide')} disabled={!!emailActing}>
+                                    Not important
+                                  </button>
+                                  <button type="button" onClick={() => actOnEmail(s.permalink, 'save')} disabled={!!emailActing || writes !== 'granted'} aria-busy={emailActing === `save:${s.permalink}`}>
+                                    {emailActing === `save:${s.permalink}` ? 'Adding…' : 'Add to Notion'}
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </li>
+                        );
+                      })}
                     </ul>
                   </>
                 )}
-                {digest.actions.length === 0 && digest.summaries.length === 0 && (
-                  <p className="muted">No time-sensitive actions or easy-to-miss notes in the last day’s primary inbox.</p>
+                {visibleActions.length === 0 && visibleSummaries.length === 0 && (
+                  <p className="muted">No time-sensitive actions or easy-to-miss notes in the last 24 hours of Primary inbox.</p>
+                )}
+                {writes !== 'granted' && (visibleActions.length > 0 || visibleSummaries.length > 0) && (
+                  <p className="muted small">Turn on Notion task updates in Connections to add an email as a task.</p>
                 )}
               </>
             )}

@@ -23,6 +23,7 @@ import {POST as gmailConnect} from '@/app/api/google/gmail/connect/route';
 import {POST as gmailDisconnect} from '@/app/api/google/gmail/disconnect/route';
 import {GET as jobsGet, POST as jobsPost} from '@/app/api/jobs/route';
 import {POST as gmailJob} from '@/app/api/jobs/gmail/route';
+import {POST as gmailItem} from '@/app/api/jobs/gmail/item/route';
 import {bearerMatches, isSameOrigin} from '@/lib/http';
 import {sanitizeFields} from '@/lib/log';
 import {isPublicPath} from '@/lib/public-paths';
@@ -49,6 +50,7 @@ describe('unauthorized access', () => {
       gmailCallback(new Request(`${BASE}/api/google/gmail/callback?code=x&state=y`)),
       gmailDisconnect(new Request(`${BASE}/api/google/gmail/disconnect`, {method: 'POST', headers: sameOrigin})),
       gmailJob(new Request(`${BASE}/api/jobs/gmail`, {method: 'POST', headers: {...sameOrigin, 'idempotency-key': 'abcdefgh12'}})),
+      gmailItem(new Request(`${BASE}/api/jobs/gmail/item`, {method: 'POST', headers: {...sameOrigin, 'content-type': 'application/json'}, body: '{}'})),
       chatGet(),
       chatPost(new Request(`${BASE}/api/chat`, {method: 'POST', headers: {...sameOrigin, 'idempotency-key': 'abcdefgh12'}, body: JSON.stringify({message: 'hi'})})),
       chatDelete(new Request(`${BASE}/api/chat`, {method: 'DELETE', headers: sameOrigin})),
@@ -81,6 +83,7 @@ describe('unauthorized access', () => {
     expect(res2.status).toBe(403);
     expect((await gmailConnect(new Request(`${BASE}/api/google/gmail/connect`, {method: 'POST', headers: {'sec-fetch-site': 'cross-site'}}))).status).toBe(403);
     expect((await gmailJob(new Request(`${BASE}/api/jobs/gmail`, {method: 'POST', headers: {origin: 'https://evil.example', 'idempotency-key': 'abcdefgh12'}}))).status).toBe(403);
+    expect((await gmailItem(new Request(`${BASE}/api/jobs/gmail/item`, {method: 'POST', headers: {origin: 'https://evil.example'}, body: '{}'}))).status).toBe(403);
     const evil = {origin: 'https://evil.example', 'idempotency-key': 'abcdefgh12'};
     for (const res of await Promise.all([
       chatPost(new Request(`${BASE}/api/chat`, {method: 'POST', headers: evil, body: JSON.stringify({message: 'I need to buy a boat'})})),

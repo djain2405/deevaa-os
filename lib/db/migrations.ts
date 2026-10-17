@@ -167,4 +167,20 @@ export const MIGRATION_0004 = `
 ALTER TABLE users ADD COLUMN IF NOT EXISTS blueprint_notion_page_id text;
 `;
 
-export const MIGRATIONS = [MIGRATION_0001, MIGRATION_0002, MIGRATION_0003, MIGRATION_0004];
+export const MIGRATION_0005 = `
+CREATE TABLE IF NOT EXISTS email_items (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  permalink text NOT NULL,
+  kind text NOT NULL,
+  title text,
+  page_id text,
+  page_url text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS email_items_user_permalink ON email_items(user_id, permalink);
+CREATE INDEX IF NOT EXISTS email_items_user_updated ON email_items(user_id, updated_at DESC);
+`;
+
+export const MIGRATIONS = [MIGRATION_0001, MIGRATION_0002, MIGRATION_0003, MIGRATION_0004, MIGRATION_0005];

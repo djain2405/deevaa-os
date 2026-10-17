@@ -10,6 +10,7 @@ export default defineConfig({
     environment: 'node',
     include: ['tests/**/*.test.ts'],
     testTimeout: 20000,
+    hookTimeout: 20000,
     env: {
       TZ: 'UTC',
       AUTH_SECRET: 'test-auth-secret-0123456789abcdef0123456789',

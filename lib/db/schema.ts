@@ -166,6 +166,22 @@ export const blueprintImports = pgTable(
   (t) => [uniqueIndex('blueprint_imports_user_content').on(t.userId, t.contentSha256)]
 );
 
+export const emailItems = pgTable(
+  'email_items',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').notNull().references(() => users.id, {onDelete: 'cascade'}),
+    permalink: text('permalink').notNull(),
+    kind: text('kind').$type<'hidden' | 'saved'>().notNull(),
+    title: text('title'),
+    pageId: text('page_id'),
+    pageUrl: text('page_url'),
+    createdAt: timestamp('created_at', {withTimezone: true}).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', {withTimezone: true}).notNull().defaultNow()
+  },
+  (t) => [uniqueIndex('email_items_user_permalink').on(t.userId, t.permalink)]
+);
+
 export const actionFeedback = pgTable('action_feedback', {
   id: uuid('id').primaryKey().defaultRandom(),
   userId: uuid('user_id').notNull().references(() => users.id, {onDelete: 'cascade'}),

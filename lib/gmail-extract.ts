@@ -7,10 +7,14 @@ import {daysUntil} from './time';
 import {TIMEZONE, type EmailAction, type EmailDigest, type EmailSummary} from './types';
 import {DateTime} from 'luxon';
 
-export const ACTION_RE =
-  /\b(due|deadline|expir(?:e|es|ing|ed|ation)|rsvp|invoice|pay(?:ment)?|submit|asap|urgent|reply by|respond by|action required)\b/i;
+/** Remaining-work language — not completed payments or order dates. */
+export const DEADLINE_RE =
+  /\b(due|deadline|expir(?:e|es|ing|ation)|rsvp|reply by|respond by|action required|submit (?:by|before)|payment due)\b/i;
+export const ACTION_RE = DEADLINE_RE;
 export const MISS_RE =
   /\b(interview|offer letter|visa|contract|tax|irs|verif(?:y|ication)|security alert|password|two-factor|2fa|wire transfer|attorney|court date)\b/i;
+export const TRANSACTIONAL_RE =
+  /\b(receipt|your (?:order|purchase|payment)|order confirmation|shipping (?:confirmation|update|notification)|has shipped|out for delivery|tracking number|package delivered|delivered to|thanks for your (?:purchase|payment|order)|thank you for your (?:purchase|payment|order)|payment (?:received|processed|confirmed)|we(?:'|’)ve received your (?:order|payment)|purchase confirmation)\b/i;
 const NOREPLY = /no-?reply|mailer-daemon|notifications@|newsletter|donotreply/i;
 const normalize = (s: string) => s.toLowerCase().replace(/[’‘]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, ' ').trim();
 
@@ -62,41 +66,53 @@ function groundedQuote(text: string, evidence: string) {
   return evidence.replace(/\s+/g, ' ').trim().slice(0, 80);
 }
 
-function dueFromText(text: string, now: Date, today: string): string | null {
-  const matches = findDates(text, now);
-  for (const match of matches) {
+export function isTransactional(text: string) {
+  return TRANSACTIONAL_RE.test(text);
+}
+
+/** Future or today date next to remaining-work language. Past order/payment dates do not count. */
+export function remainingDeadline(text: string, now: Date): string | null {
+  if (!DEADLINE_RE.test(text)) return null;
+  const today = DateTime.fromJSDate(now).setZone(TIMEZONE).toISODate()!;
+  for (const match of findDates(text, now)) {
     const {due} = dueFrom(match);
     const delta = daysUntil(due, today);
-    if (delta >= -1 && delta <= 7) return due;
+    if (delta >= 0 && delta <= 14) return due;
   }
-  return matches[0] ? dueFrom(matches[0]).due : null;
+  return null;
+}
+
+export function classifyEmail(text: string, now: Date): {kind: 'action' | 'summary' | 'skip'; due: string | null} {
+  const transactional = isTransactional(text);
+  const due = remainingDeadline(text, now);
+  const deadline = DEADLINE_RE.test(text);
+  if (transactional && !due) return {kind: 'skip', due: null};
+  if (deadline) return {kind: 'action', due};
+  if (!transactional && MISS_RE.test(text)) return {kind: 'summary', due: null};
+  return {kind: 'skip', due: null};
 }
 
 export function extractWithRules(messages: GmailMessage[], now: Date): {actions: EmailAction[]; summaries: EmailSummary[]} {
-  const today = DateTime.fromJSDate(now).setZone(TIMEZONE).toISODate()!;
   const actions: EmailAction[] = [];
   const summaries: EmailSummary[] = [];
   for (const m of messages) {
     if (isSkippedCategory(m.labelIds)) continue;
     const text = messageText(m);
-    const actionHit = ACTION_RE.test(text);
-    const missHit = MISS_RE.test(text);
-    if (NOREPLY.test(m.from) && !actionHit && !missHit) continue;
-    const due = actionHit || findDates(text, now).length ? dueFromText(text, now, today) : null;
-    const near = due ? daysUntil(due, today) <= 7 && daysUntil(due, today) >= -1 : false;
+    const classified = classifyEmail(text, now);
+    if (NOREPLY.test(m.from) && classified.kind === 'skip') continue;
     const permalink = gmailPermalink(m.threadId);
     const title = (m.subject || m.snippet || 'Message').slice(0, 120);
-    if (actionHit || near) {
+    if (classified.kind === 'action') {
       actions.push({
         title,
-        due: near ? due : null,
-        why: actionHit ? 'Time-sensitive language in this message.' : `A date in the next few days is mentioned (${due}).`,
+        due: classified.due,
+        why: classified.due ? `Remaining deadline ${classified.due} quoted from this message.` : 'Time-sensitive language in this message.',
         permalink,
-        evidence: quoteAround(text, actionHit ? ACTION_RE : /\d/)
+        evidence: quoteAround(text, DEADLINE_RE)
       });
       continue;
     }
-    if (missHit) {
+    if (classified.kind === 'summary') {
       summaries.push({
         subject: title,
         from: displayFrom(m.from),
@@ -136,12 +152,26 @@ export function groundModelOutput(
       dropped++;
       continue;
     }
-    let due: string | null = null;
+    const classified = classifyEmail(text, now);
+    if (classified.kind === 'skip') {
+      dropped++;
+      continue;
+    }
+    let due: string | null = classified.due;
     if (item.due) {
       const allowed = findDates(text, now).some((match) => dueFrom(match).due === item.due);
-      due = allowed ? item.due : null;
+      const candidate = allowed ? item.due : null;
+      if (candidate && daysUntil(candidate, today) >= 0 && daysUntil(candidate, today) <= 14) due = candidate;
     }
-    if (due && daysUntil(due, today) > 14) due = null;
+    if (classified.kind === 'summary' && !due) {
+      summaries.push({
+        subject: (m.subject || 'Message').slice(0, 120),
+        from: displayFrom(m.from),
+        why: item.why.slice(0, 300) || 'Important message quoted from the inbox.',
+        permalink: gmailPermalink(m.threadId)
+      });
+      continue;
+    }
     actions.push({
       title: (item.title || m.subject || 'Message').slice(0, 120),
       due,
@@ -156,7 +186,12 @@ export function groundModelOutput(
       dropped++;
       continue;
     }
-    const evidence = groundedQuote(messageText(m), item.evidence);
+    const text = messageText(m);
+    if (classifyEmail(text, now).kind === 'skip') {
+      dropped++;
+      continue;
+    }
+    const evidence = groundedQuote(text, item.evidence);
     if (!evidence) {
       dropped++;
       continue;
@@ -186,7 +221,8 @@ const SYSTEM = [
   'Action: title, due (YYYY-MM-DD or null), why, evidence, messageId.',
   'Summary: why, evidence, messageId.',
   'evidence must be copied exactly from that message. Never invent dates. Ignore promotions, social mail, and newsletters.',
-  'Do not suggest sending, replying, or creating tasks. Do not mark anything done.'
+  'Ignore receipts, shipping confirmations, and thanks-for-your-payment mail unless a remaining future deadline is quoted.',
+  'Do not suggest sending or replying. Do not mark anything done.'
 ].join('\n');
 
 export async function extractDigest(
