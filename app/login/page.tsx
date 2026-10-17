@@ -1,5 +1,6 @@
 import {redirect} from 'next/navigation';
 import {auth, signIn} from '@/auth';
+import {authOrigin} from '@/lib/auth-url';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,8 +9,10 @@ export default async function Login({searchParams}: {searchParams: Promise<{erro
   if (session?.user) redirect('/');
   const {error, callbackUrl} = await searchParams;
   const target = callbackUrl?.startsWith('/') && !callbackUrl.startsWith('//') ? callbackUrl : '/';
-  const configured = Boolean(process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET && process.env.AUTH_SECRET && process.env.ALLOWED_EMAIL);
+  const secretOk = Boolean(process.env.AUTH_SECRET && process.env.AUTH_SECRET.length >= 16);
+  const configured = Boolean(process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET && secretOk && process.env.ALLOWED_EMAIL);
   const ownerEmail = process.env.ALLOWED_EMAIL?.trim();
+  const origin = authOrigin();
 
   return (
     <main className="login">
@@ -36,7 +39,21 @@ export default async function Login({searchParams}: {searchParams: Promise<{erro
           Sign-in is not configured yet. Set AUTH_SECRET, AUTH_GOOGLE_ID, AUTH_GOOGLE_SECRET and ALLOWED_EMAIL, then restart the server.
         </p>
       )}
-      {error && (
+      {error === 'Configuration' && (
+        <p className="warning" role="alert">
+          Sign-in hit a server configuration error (often wrong OAuth callback host). On Railway set <code>APP_URL</code> to{' '}
+          <code>https://deevaa-os-production.up.railway.app</code>, redeploy, and use that same host in Google redirect URIs—not <code>localhost:8080</code>.
+          {origin ? (
+            <>
+              {' '}
+              Server thinks its public URL is <code>{origin}</code>.
+            </>
+          ) : (
+            <> Server has no <code>APP_URL</code> / <code>RAILWAY_PUBLIC_DOMAIN</code>—add <code>APP_URL</code> and redeploy.</>
+          )}
+        </p>
+      )}
+      {error && error !== 'Configuration' && (
         <p className="warning" role="alert">
           Sign-in was not allowed. Use the Google account{ownerEmail ? ` ${ownerEmail}` : ''} with a verified email, or pick that account on the Google chooser if you use several.
         </p>

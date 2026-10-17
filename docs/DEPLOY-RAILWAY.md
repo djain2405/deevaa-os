@@ -24,7 +24,8 @@ Generate **new** production secrets; do not copy local `.env.local` values for `
 
 | Variable | Required | Notes |
 |---|---|---|
-| `APP_URL` | yes | `https://YOUR_RAILWAY_DOMAIN` (no trailing slash) |
+| `APP_URL` | yes | `https://YOUR_RAILWAY_DOMAIN` (no trailing slash). Also used as the Auth.js site URL so Google OAuth does not redirect to `localhost:8080`. |
+| `AUTH_URL` | no | Optional; defaults to `APP_URL`. Set only if you split auth origin from `APP_URL`. |
 | `AUTH_SECRET` | yes | `openssl rand -base64 33` |
 | `AUTH_GOOGLE_ID` | yes | Same OAuth client as local is fine |
 | `AUTH_GOOGLE_SECRET` | yes | |

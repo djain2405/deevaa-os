@@ -1,9 +1,7 @@
-import NextAuth from 'next-auth';
 import {NextResponse} from 'next/server';
-import {authConfig, isAllowedEmail} from './auth.config';
+import {auth} from './auth';
+import {isAllowedEmail} from './auth.config';
 import {isPublicPath} from './lib/public-paths';
-
-const {auth} = NextAuth(authConfig);
 
 export default auth((req) => {
   const {pathname, search} = req.nextUrl;
