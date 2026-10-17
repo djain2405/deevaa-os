@@ -40,6 +40,10 @@ export const BLUEPRINT_FIELDS: {key: BlueprintField; label: string; hint: string
 
 export const emptyBlueprint = (): Blueprint => Object.fromEntries(BLUEPRINT_FIELDS.map((f) => [f.key, []])) as unknown as Blueprint;
 
+export function blueprintHasContent(data: Blueprint) {
+  return BLUEPRINT_FIELDS.some((f) => data[f.key].length > 0);
+}
+
 /** Where a confirmed chat note goes. */
 export const SUGGESTION_FIELD: Record<string, BlueprintField> = {
   goal: 'goals',

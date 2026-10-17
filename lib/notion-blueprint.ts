@@ -1,5 +1,6 @@
-import {BLUEPRINT_FIELDS, type Blueprint} from './blueprint';
-import {hasPermission, NOTION_WRITE} from './intake-store';
+import {BLUEPRINT_FIELDS, blueprintHasContent, emptyBlueprint, parseBlueprint, type Blueprint, type BlueprintField} from './blueprint';
+import {hasPermission, latestBlueprint, NOTION_WRITE, saveBlueprint} from './intake-store';
+import {logEvent} from './log';
 import {NOTION_VERSION, notionId} from './notion';
 import {NotionWriteError, notionWriteError, type WriteErrorCode} from './notion-write';
 import {providerFetch, type FetchOptions} from './provider-fetch';
@@ -94,15 +95,41 @@ async function call(op: string, url: string, init: RequestInit, opts: FetchOptio
   return readBody(res);
 }
 
+type NotionBlock = {id?: string; type?: string; [key: string]: any};
+
+function normLabel(value: string) {
+  return value.trim().replace(/['’`]/g, "'");
+}
+
+const LABEL_TO_FIELD = new Map(BLUEPRINT_FIELDS.map((f) => [normLabel(f.label), f.key]));
+
+export function parseBlueprintFromNotionBlocks(blocks: NotionBlock[]): Blueprint {
+  const data = emptyBlueprint();
+  let field: BlueprintField | null = null;
+  for (const block of blocks) {
+    const type = typeof block?.type === 'string' ? block.type : '';
+    const text = blockPlainText(block as {type: string; [key: string]: unknown}).trim();
+    if (type === 'heading_2') {
+      field = LABEL_TO_FIELD.get(normLabel(text)) ?? null;
+      continue;
+    }
+    if (!field || !text) continue;
+    if (type === 'bulleted_list_item' || type === 'numbered_list_item' || type === 'paragraph' || type === 'to_do') {
+      if (!data[field].includes(text)) data[field] = [...data[field], text.slice(0, 240)].slice(-30);
+    }
+  }
+  return parseBlueprint(data);
+}
+
 async function listBlockChildren(token: string, blockId: string, opts: FetchOptions) {
-  const out: {id: string}[] = [];
+  const out: NotionBlock[] = [];
   let cursor: string | undefined;
   do {
     const q = new URLSearchParams({page_size: '100'});
     if (cursor) q.set('start_cursor', cursor);
     const page = await call('notion.blueprint.list', `${API}/blocks/${blockId}/children?${q}`, {headers: headers(token)}, opts);
     for (const b of page?.results ?? []) {
-      if (b?.id) out.push({id: b.id});
+      if (b?.id) out.push(b);
     }
     cursor = page?.has_more ? page.next_cursor : undefined;
   } while (cursor);
@@ -196,5 +223,77 @@ export async function publishLifeBlueprintToNotion(userId: string, blueprint: Bl
       url = storedPageId ? notionPagePublicUrl(storedPageId) : null;
     }
     return {status: 'failed', url, message};
+  }
+}
+
+type RestoreDeps = FetchOptions & {
+  token?: string;
+  parentPageId?: string;
+  storedPageId?: string | null;
+  persistPageId?: (pageId: string) => Promise<void>;
+};
+
+async function pageTitle(token: string, pageId: string, opts: FetchOptions) {
+  const page = await call('notion.blueprint.read', `${API}/pages/${pageId}`, {headers: headers(token)}, opts);
+  return pageTitleFromProps(page?.properties ?? {});
+}
+
+async function findLifeBlueprintPageId(token: string, parentPageId: string | undefined, storedPageId: string | null, opts: FetchOptions) {
+  if (storedPageId) {
+    try {
+      const title = await pageTitle(token, storedPageId, opts);
+      if (normLabel(title) === normLabel(PAGE_TITLE)) return storedPageId;
+    } catch {
+      // Page id from a previous environment may be stale; search instead.
+    }
+  }
+  if (parentPageId) {
+    const children = await listBlockChildren(token, parentPageId, opts);
+    const child = children.find((b) => b.type === 'child_page' && normLabel(b.child_page?.title ?? '') === normLabel(PAGE_TITLE));
+    if (typeof child?.id === 'string') return child.id;
+  }
+  const search = await call(
+    'notion.blueprint.search',
+    `${API}/search`,
+    {method: 'POST', headers: headers(token), body: JSON.stringify({query: PAGE_TITLE, filter: {property: 'object', value: 'page'}, page_size: 20})},
+    opts
+  );
+  for (const result of search?.results ?? []) {
+    if (result?.object === 'page' && typeof result.id === 'string' && normLabel(pageTitleFromProps(result.properties ?? {})) === normLabel(PAGE_TITLE)) {
+      return result.id as string;
+    }
+  }
+  return null;
+}
+
+/**
+ * When Postgres has no Life Blueprint (fresh Railway DB), copy the Notion page
+ * titled "Life Blueprint" back into blueprint_versions and remember its page id.
+ */
+export async function restoreLifeBlueprintFromNotion(userId: string, deps: RestoreDeps = {}) {
+  const current = await latestBlueprint(userId);
+  if (current && blueprintHasContent(parseBlueprint(current.data))) return {status: 'skipped' as const, pageId: null};
+  const token = deps.token ?? process.env.NOTION_TOKEN;
+  const parentPageId = notionId(deps.parentPageId ?? process.env.NOTION_PARENT_PAGE_ID);
+  if (!token) return {status: 'skipped' as const, pageId: null};
+
+  const opts: FetchOptions = {timeoutMs: 60_000, ...deps};
+  try {
+    const storedPageId = deps.storedPageId !== undefined ? deps.storedPageId : await getBlueprintNotionPageId(userId);
+    const pageId = await findLifeBlueprintPageId(token, parentPageId, storedPageId ?? null, opts);
+    if (!pageId) return {status: 'skipped' as const, pageId: null};
+
+    const persist = deps.persistPageId ?? ((id: string) => setBlueprintNotionPageId(userId, id));
+    if (pageId !== storedPageId) await persist(pageId);
+
+    const blocks = await listBlockChildren(token, pageId, opts);
+    const data = parseBlueprintFromNotionBlocks(blocks);
+    if (!blueprintHasContent(data)) return {status: 'skipped' as const, pageId};
+    const saved = await saveBlueprint(userId, data, current?.version ?? 0);
+    if (!saved) return {status: 'skipped' as const, pageId};
+    return {status: 'restored' as const, pageId};
+  } catch (e) {
+    logEvent('warn', 'blueprint.restore.notion', {kind: e instanceof Error ? e.name : 'unknown'});
+    return {status: 'failed' as const, pageId: null};
   }
 }

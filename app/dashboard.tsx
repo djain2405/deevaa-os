@@ -671,7 +671,7 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
           <ChatPanel writes={writes} onChanged={load} />
         </details>
 
-        <details className="panel">
+        <details className="panel" open={conn?.calendar.state !== 'connected' || conn?.store !== 'postgres'}>
           <summary>Connections & scheduling</summary>
           <section aria-labelledby="sources-title">
             <h2 id="sources-title" className="visually-hidden">Connections</h2>
@@ -695,6 +695,7 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
                   </div>
                 ) : (
                   <form method="post" action="/api/google/connect">
+                    <p className="muted small">Connect once on this site. Calendar access from your laptop does not carry over.</p>
                     <button type="submit">{conn?.calendar.state === 'revoked' ? 'Reconnect' : 'Connect'} Google Calendar</button>
                   </form>
                 )}
@@ -703,6 +704,19 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
                 <div>
                   <strong>AI explanations</strong> <span className={`badge badge-${conn?.ai === 'enabled' ? 'connected' : 'not_connected'}`}>{conn?.ai === 'enabled' ? 'On' : 'Off'}</span>
                   <p className="muted">{b?.ai.detail ?? (conn?.ai === 'enabled' ? 'Optional wording on top of the deterministic plan.' : 'Plans are deterministic; set OPENAI_API_KEY for optional explanations.')}</p>
+                </div>
+              </li>
+              <li className="conn">
+                <div>
+                  <strong>Database</strong>{' '}
+                  <span className={`badge badge-${conn?.store === 'postgres' ? 'connected' : 'pending'}`}>
+                    {conn?.store === 'postgres' ? 'Connected' : 'Not connected'}
+                  </span>
+                  <p className="muted">
+                    {conn?.store === 'postgres'
+                      ? 'This site is using Railway Postgres, so sign-in, briefings, and Blueprint stay after redeploys.'
+                      : 'This site is not using Railway Postgres yet. In Railway, open the web service → Variables and add DATABASE_URL as a reference to your Postgres plugin, then redeploy.'}
+                  </p>
                 </div>
               </li>
               <li className="conn">

@@ -1,4 +1,7 @@
 # Railway deploy: https://docs.railway.com/guides/nextjs
+# Add a PostgreSQL plugin in the same project, then on this web service set:
+#   DATABASE_URL=${{Postgres.DATABASE_URL}}
+# (use the Postgres service name if it is not "Postgres"). Do not paste postgres.railway.internal into your laptop env.
 [build]
 builder = "nixpacks"
 buildCommand = "npm run build"
@@ -8,6 +11,7 @@ startCommand = "npm run start"
 healthcheckPath = "/login"
 healthcheckTimeout = 120
 restartPolicyType = "on_failure"
+preDeployCommand = "npm run db:migrate"
 
 # Nightly briefing (05:00 UTC). Requires APP_URL and CRON_SECRET on this service.
 [[cron]]

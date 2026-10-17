@@ -12,6 +12,7 @@ type View = {
   data: Blueprint;
   suggestions: {id: string; kind: string; text: string; createdAt: string}[];
   notionPageUrl: string | null;
+  restoredFromNotion?: boolean;
   notion?: BlueprintNotion;
 };
 
@@ -68,6 +69,9 @@ export function BlueprintPanel({onSaved}: {onSaved: () => void}) {
     setDraft(toText(body.data));
     const hasContent = BLUEPRINT_FIELDS.some((f) => body.data[f.key].length > 0);
     setEditing(!hasContent);
+    if (body.restoredFromNotion && hasContent) {
+      setMessage('Loaded your Life Blueprint from Notion.');
+    }
   }, []);
 
   useEffect(() => {
@@ -174,7 +178,7 @@ export function BlueprintPanel({onSaved}: {onSaved: () => void}) {
     <section className="panel blueprint" aria-labelledby="blueprint-title">
       <h2 id="blueprint-title">Life Blueprint</h2>
       <p className="muted">
-        Only what you confirm here shapes your priorities. Ranking uses this copy on this device.{' '}
+        This is the Life Blueprint Deevaa uses for ranking. Notion keeps your tasks, and a copy of this page if you have published it.{' '}
         {view.version ? `Version ${view.version} · ${filled} section${filled === 1 ? '' : 's'} filled.` : 'Empty for now.'}
         {view.notionPageUrl && (
           <>

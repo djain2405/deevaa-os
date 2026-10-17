@@ -1,8 +1,7 @@
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {emptyBlueprint} from '@/lib/blueprint';
-import {publishLifeBlueprintToNotion, blueprintNotionBlocks} from '@/lib/notion-blueprint';
-import {NOTION_WRITE, setPermission} from '@/lib/intake-store';
-import {saveBlueprint} from '@/lib/intake-store';
+import {publishLifeBlueprintToNotion, blueprintNotionBlocks, parseBlueprintFromNotionBlocks, restoreLifeBlueprintFromNotion} from '@/lib/notion-blueprint';
+import {latestBlueprint, NOTION_WRITE, saveBlueprint, setPermission} from '@/lib/intake-store';
 import {getBlueprintNotionPageId} from '@/lib/store';
 import {freshDb, getUser, json, mockFetch} from './helpers';
 
@@ -85,5 +84,91 @@ describe('Life Blueprint Notion publish', () => {
     const second = await publishLifeBlueprintToNotion(user.id, bp2, {fetchImpl: impl});
     expect(second.status).toBe('published');
     expect(calls.filter((c) => c.init.method === 'POST' && c.url.includes('/v1/pages'))).toHaveLength(1);
+  });
+});
+
+function bulletBlock(text: string) {
+  return {object: 'block', id: `b-${text}`, type: 'bulleted_list_item', bulleted_list_item: {rich_text: [{plain_text: text}]}};
+}
+
+describe('Life Blueprint restore from Notion', () => {
+  beforeEach(async () => {
+    await freshDb();
+    vi.stubEnv('NOTION_TOKEN', 'secret');
+    vi.stubEnv('NOTION_PARENT_PAGE_ID', PARENT);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('parses heading_2 sections and bullets back into Blueprint fields', () => {
+    const data = parseBlueprintFromNotionBlocks([
+      headingBlock('Long-term goals'),
+      bulletBlock('Ship v1'),
+      headingBlock('This quarter’s priorities'),
+      bulletBlock('Finish Railway deploy')
+    ]);
+    expect(data.goals).toEqual(['Ship v1']);
+    expect(data.quarterlyPriorities).toEqual(['Finish Railway deploy']);
+  });
+
+  it('copies the Notion page into Postgres when the local Blueprint is empty', async () => {
+    const user = await getUser();
+    const {impl} = mockFetch([
+      [
+        '/v1/blocks',
+        (url) => {
+          if (url.pathname.includes(PARENT) && url.pathname.includes('/children')) {
+            return json({results: [{id: PAGE, type: 'child_page', child_page: {title: 'Life Blueprint'}}], has_more: false});
+          }
+          if (url.pathname.includes(PAGE) && url.pathname.includes('/children')) {
+            return json({results: [headingBlock('Long-term goals'), bulletBlock('Ship v1')], has_more: false});
+          }
+          return json({results: [], has_more: false});
+        }
+      ]
+    ]);
+
+    const result = await restoreLifeBlueprintFromNotion(user.id, {fetchImpl: impl});
+    expect(result.status).toBe('restored');
+    expect(await getBlueprintNotionPageId(user.id)).toBe(PAGE);
+    const row = await latestBlueprint(user.id);
+    expect(row?.version).toBe(1);
+    expect(row?.data).toMatchObject({goals: ['Ship v1']});
+  });
+
+  it('fills an empty local Blueprint from the Notion page', async () => {
+    const user = await getUser();
+    await saveBlueprint(user.id, emptyBlueprint(), 0);
+    const {impl} = mockFetch([
+      [
+        '/v1/blocks',
+        (url) => {
+          if (url.pathname.includes(PARENT) && url.pathname.includes('/children')) {
+            return json({results: [{id: PAGE, type: 'child_page', child_page: {title: 'Life Blueprint'}}], has_more: false});
+          }
+          if (url.pathname.includes(PAGE) && url.pathname.includes('/children')) {
+            return json({results: [headingBlock('Long-term goals'), bulletBlock('Ship v1')], has_more: false});
+          }
+          return json({results: [], has_more: false});
+        }
+      ]
+    ]);
+    const result = await restoreLifeBlueprintFromNotion(user.id, {fetchImpl: impl});
+    expect(result.status).toBe('restored');
+    expect((await latestBlueprint(user.id))?.data).toMatchObject({goals: ['Ship v1']});
+  });
+
+  it('does not overwrite a Blueprint that already exists locally', async () => {
+    const user = await getUser();
+    const local = emptyBlueprint();
+    local.goals = ['Keep me'];
+    await saveBlueprint(user.id, local, 0);
+    const {impl, calls} = mockFetch([['/v1/', () => json({results: []})]]);
+    const result = await restoreLifeBlueprintFromNotion(user.id, {fetchImpl: impl});
+    expect(result.status).toBe('skipped');
+    expect(calls).toHaveLength(0);
+    expect((await latestBlueprint(user.id))?.data).toMatchObject({goals: ['Keep me']});
   });
 });

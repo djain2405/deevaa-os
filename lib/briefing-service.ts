@@ -1,6 +1,7 @@
 import {enhanceWithAi} from './ai';
-import {parseBlueprint, type Blueprint} from './blueprint';
+import {blueprintHasContent, parseBlueprint, type Blueprint} from './blueprint';
 import {latestBlueprint} from './intake-store';
+import {restoreLifeBlueprintFromNotion} from './notion-blueprint';
 import {fetchCalendarEvents} from './google-calendar';
 import {logEvent} from './log';
 import {fetchNotionTasks} from './notion';
@@ -33,7 +34,12 @@ export const defaultDeps: BriefingDeps = {
   enhance: (b) => enhanceWithAi(b),
   now: () => new Date(),
   blueprint: async (userId) => {
-    const row = await latestBlueprint(userId);
+    let row = await latestBlueprint(userId);
+    const data = row ? parseBlueprint(row.data) : null;
+    if (!data || !blueprintHasContent(data)) {
+      await restoreLifeBlueprintFromNotion(userId);
+      row = await latestBlueprint(userId);
+    }
     return row ? parseBlueprint(row.data) : null;
   }
 };

@@ -14,7 +14,7 @@ Always-on Next.js + Postgres so you can sign in from any browser and the nightly
 1. **New Project** → **Deploy from GitHub repo** → select `deevaa-os`.
 2. Add **PostgreSQL** to the project (Railway plugin).
 3. Open the **web service** → **Settings** → **Networking** → **Generate domain** (e.g. `deevaa-os-production.up.railway.app`).
-4. Copy the Postgres **`DATABASE_URL`** from the database service variables (or reference `${{Postgres.DATABASE_URL}}` in the web service).
+4. On the **web service → Variables**, add a **reference variable**: `DATABASE_URL` = `${{Postgres.DATABASE_URL}}` (the name after `${{` must match the Postgres service name). Redeploy. Do not copy `postgres.railway.internal` into `.env.local` on your Mac.
 
 Build and start are defined in [`railway.toml`](../railway.toml) (`npm run build`, `npm run start` with `PORT`).
 
@@ -30,7 +30,7 @@ Generate **new** production secrets; do not copy local `.env.local` values for `
 | `AUTH_GOOGLE_ID` | yes | Same OAuth client as local is fine |
 | `AUTH_GOOGLE_SECRET` | yes | |
 | `ALLOWED_EMAIL` | yes | Your Google account |
-| `DATABASE_URL` | yes | From Railway Postgres |
+| `DATABASE_URL` | yes | Reference `${{Postgres.DATABASE_URL}}` on the web service. Production will not start without it. |
 | `TOKEN_ENCRYPTION_KEY` | yes | `openssl rand -base64 32` |
 | `NOTION_TOKEN` | yes | |
 | `NOTION_DATA_SOURCE_ID` | yes | Or `NOTION_DATABASE_ID` |
@@ -66,7 +66,7 @@ DATABASE_URL="postgresql://..." npm run db:migrate
 1. Push to `main` or trigger **Deploy** in Railway.
 2. Open `https://YOUR_RAILWAY_DOMAIN/login` and sign in with `ALLOWED_EMAIL`.
 3. **Connections**: connect Google Calendar; turn on Notion task updates / Blueprint publish if you want writes.
-4. **Life Blueprint**: save once (local version in Postgres; optional Notion page publish).
+4. **Life Blueprint**: on first sign-in an empty Postgres copies the Notion page titled `Life Blueprint` (under `NOTION_PARENT_PAGE_ID`). Saving still publishes back to that page.
 
 ### Scheduler (`/api/cron`)
 
@@ -82,15 +82,15 @@ Expect `200` with `"outcome":"created"` the first time for tomorrow’s date, th
 
 Alternative: keep using [`vercel.json`](../vercel.json) cron if you deploy to Vercel instead.
 
-## 6. What does not migrate from local
+## 6. First sign-in on Railway
 
-Embedded PGlite (`./.data/pglite`) is **not** uploaded. Production Postgres starts empty:
+The production database starts empty. After you sign in:
 
-- Sign in creates your user row.
-- Reconnect Google Calendar (new encrypted refresh token).
-- Re-save Life Blueprint (and publish to Notion if enabled).
+- Life Blueprint is copied from the Notion page titled `Life Blueprint` (needs `NOTION_TOKEN` and `NOTION_PARENT_PAGE_ID`).
+- Click **Connect Google Calendar** once on this site.
+- Turn on **Notion task updates** in Connections if you want chat/Done/Blueprint publish to write to Notion.
 
-Notion tasks are unchanged (same workspace).
+Notion tasks themselves are already in your workspace; they are not stored in Postgres.
 
 ## Semi-autonomous milestones (later)
 

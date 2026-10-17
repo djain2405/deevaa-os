@@ -1,9 +1,9 @@
-import {Blueprint, emptyBlueprint, parseBlueprint, SUGGESTION_FIELD} from '@/lib/blueprint';
+import {Blueprint, blueprintHasContent, emptyBlueprint, parseBlueprint, SUGGESTION_FIELD} from '@/lib/blueprint';
 import {apiError, forbiddenOrigin, isSameOrigin, privateJson, unauthorized} from '@/lib/http';
 import {wipeBlueprintData} from '@/lib/import-store';
 import {latestBlueprint, listSuggestions, resolveSuggestion, saveBlueprint} from '@/lib/intake-store';
 import {getSessionUser} from '@/lib/session';
-import {notionPagePublicUrl, publishLifeBlueprintToNotion} from '@/lib/notion-blueprint';
+import {notionPagePublicUrl, publishLifeBlueprintToNotion, restoreLifeBlueprintFromNotion} from '@/lib/notion-blueprint';
 import {logEvent} from '@/lib/log';
 import {audit, getBlueprintNotionPageId} from '@/lib/store';
 
@@ -11,6 +11,15 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
 async function view(userId: string) {
+  const existing = await latestBlueprint(userId);
+  let restoredFromNotion = false;
+  if (!existing || !blueprintHasContent(parseBlueprint(existing.data))) {
+    const restored = await restoreLifeBlueprintFromNotion(userId).catch((e) => {
+      logEvent('warn', 'blueprint.view.restore', {kind: e instanceof Error ? e.name : 'unknown'});
+      return {status: 'failed' as const, pageId: null};
+    });
+    restoredFromNotion = restored.status === 'restored';
+  }
   const row = await latestBlueprint(userId);
   const suggestions = await listSuggestions(userId);
   let notionPageId: string | null = null;
@@ -24,7 +33,8 @@ async function view(userId: string) {
     updatedAt: row?.createdAt.toISOString() ?? null,
     data: row ? parseBlueprint(row.data) : emptyBlueprint(),
     suggestions: suggestions.map((s) => ({id: s.id, kind: s.kind, text: s.text, createdAt: s.createdAt.toISOString()})),
-    notionPageUrl: notionPageId ? notionPagePublicUrl(notionPageId) : null
+    notionPageUrl: notionPageId ? notionPagePublicUrl(notionPageId) : null,
+    restoredFromNotion
   };
 }
 
