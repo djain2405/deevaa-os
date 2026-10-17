@@ -1,5 +1,5 @@
 import {redirect} from 'next/navigation';
-import {auth, signIn} from '@/auth';
+import {auth} from '@/auth';
 import {authOrigin} from '@/lib/auth-url';
 
 export const dynamic = 'force-dynamic';
@@ -24,16 +24,12 @@ export default async function Login({searchParams}: {searchParams: Promise<{erro
         Deevaa is private to one owner account{ownerEmail ? ` (${ownerEmail})` : ''}. Signing in shares only your name and email with this app; calendar access is requested separately.
       </p>
       {configured ? (
-        <form
-          action={async () => {
-            'use server';
-            await signIn('google', {redirectTo: target});
-          }}
+        <a
+          className="cta"
+          href={`/api/auth/signin/google?${new URLSearchParams({callbackUrl: target})}`}
         >
-          <button className="cta" type="submit">
-            Continue with Google
-          </button>
-        </form>
+          Continue with Google
+        </a>
       ) : (
         <p className="warning" role="alert">
           Sign-in is not configured yet. Set AUTH_SECRET, AUTH_GOOGLE_ID, AUTH_GOOGLE_SECRET and ALLOWED_EMAIL, then restart the server.
@@ -41,15 +37,15 @@ export default async function Login({searchParams}: {searchParams: Promise<{erro
       )}
       {error === 'Configuration' && (
         <p className="warning" role="alert">
-          Sign-in hit a server configuration error (often wrong OAuth callback host). On Railway set <code>APP_URL</code> to{' '}
-          <code>https://deevaa-os-production.up.railway.app</code>, redeploy, and use that same host in Google redirect URIs—not <code>localhost:8080</code>.
+          Sign-in hit a server configuration error. If the address bar shows <code>localhost:8080</code>, Railway is missing a public URL: set{' '}
+          <code>APP_URL=https://deevaa-os-production.up.railway.app</code> (no trailing slash), redeploy, and match that host in Google redirect URIs.
           {origin ? (
             <>
               {' '}
-              Server thinks its public URL is <code>{origin}</code>.
+              Resolved public URL: <code>{origin}</code> (also exported to <code>AUTH_URL</code> at startup).
             </>
           ) : (
-            <> Server has no <code>APP_URL</code> / <code>RAILWAY_PUBLIC_DOMAIN</code>—add <code>APP_URL</code> and redeploy.</>
+            <> No <code>APP_URL</code> or <code>RAILWAY_PUBLIC_DOMAIN</code>—add <code>APP_URL</code> and redeploy.</>
           )}
         </p>
       )}

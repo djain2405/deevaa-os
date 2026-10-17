@@ -24,8 +24,8 @@ Generate **new** production secrets; do not copy local `.env.local` values for `
 
 | Variable | Required | Notes |
 |---|---|---|
-| `APP_URL` | yes | `https://YOUR_RAILWAY_DOMAIN` (no trailing slash). Also used as the Auth.js site URL so Google OAuth does not redirect to `localhost:8080`. |
-| `AUTH_URL` | no | Optional; defaults to `APP_URL`. Set only if you split auth origin from `APP_URL`. |
+| `APP_URL` | yes | `https://YOUR_RAILWAY_DOMAIN` (no trailing slash). At startup the app copies this into `AUTH_URL` when unset—Auth.js **only** reads `AUTH_URL` for OAuth callbacks (not `APP_URL` alone). Without it you may land on `https://localhost:8080/login?error=Configuration`. |
+| `AUTH_URL` | no | Optional override. If unset, set automatically from `APP_URL` or `RAILWAY_PUBLIC_DOMAIN`. |
 | `AUTH_SECRET` | yes | `openssl rand -base64 33` |
 | `AUTH_GOOGLE_ID` | yes | Same OAuth client as local is fine |
 | `AUTH_GOOGLE_SECRET` | yes | |

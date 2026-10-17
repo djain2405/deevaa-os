@@ -1,3 +1,4 @@
+import './lib/sync-auth-env';
 import type {NextAuthConfig} from 'next-auth';
 import Google from 'next-auth/providers/google';
 import {authOrigin} from './lib/auth-url';
