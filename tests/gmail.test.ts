@@ -30,7 +30,10 @@ beforeEach(async () => {
   userId = (await getOrCreateUser('owner@example.com')).id;
   session.user = {id: userId, email: 'owner@example.com'};
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
 
 function msg(id: string, fields: {subject: string; from?: string; snippet?: string; excerpt?: string; labelIds?: string[]}) {
   return {
@@ -192,6 +195,7 @@ describe('Gmail OAuth and reads', () => {
       new Request(`http://localhost:3000/api/google/gmail/callback?code=c&state=${state}`, {headers: {cookie: 'deevaa_gmail_nonce=n1'}})
     );
     expect(res.headers.get('location')).toContain('gmail=connected');
+    expect(res.headers.get('location')).toContain('http://localhost:3000/');
     const cred = (await getCredential(userId, GMAIL_PROVIDER))!;
     expect(cred.encryptedRefreshToken).not.toContain('gmail-rt-secret');
     expect(decryptSecret(cred.encryptedRefreshToken, `${userId}:${GMAIL_PROVIDER}`)).toBe('gmail-rt-secret');
@@ -201,6 +205,17 @@ describe('Gmail OAuth and reads', () => {
         ...fast
       })
     ).rejects.toMatchObject({kind: 'scope'});
+  });
+
+  it('redirects to APP_URL after connect even when the request origin is Railway localhost:8080', async () => {
+    vi.stubEnv('APP_URL', 'https://deevaa-os-production.up.railway.app');
+    const {impl} = mockFetch([['oauth2.googleapis.com/token', () => json({access_token: 'acc', refresh_token: 'gmail-rt-secret', scope: GMAIL_SCOPE})]]);
+    vi.stubGlobal('fetch', impl);
+    const state = signState({uid: userId, nonce: 'n8080', exp: Date.now() + 60000});
+    const res = await gmailCallback(
+      new Request(`https://localhost:8080/api/google/gmail/callback?code=c&state=${state}`, {headers: {cookie: 'deevaa_gmail_nonce=n8080'}})
+    );
+    expect(res.headers.get('location')).toBe('https://deevaa-os-production.up.railway.app/?gmail=connected');
   });
 
   it('reports not_connected when Gmail is disconnected and does not invent mail', async () => {

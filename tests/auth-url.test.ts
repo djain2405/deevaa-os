@@ -1,5 +1,5 @@
 import {afterEach, describe, expect, it} from 'vitest';
-import {authOrigin, isLoopbackOrigin} from '@/lib/auth-url';
+import {appOrigin, authOrigin, isLoopbackOrigin} from '@/lib/auth-url';
 import {syncAuthEnv} from '@/lib/sync-auth-env';
 
 afterEach(() => {
@@ -27,6 +27,18 @@ describe('authOrigin', () => {
 
   it('keeps localhost for local development', () => {
     expect(authOrigin({APP_URL: 'http://localhost:3000'})).toBe('http://localhost:3000');
+  });
+});
+
+describe('appOrigin', () => {
+  it('does not send OAuth redirects to Railway internal localhost:8080', () => {
+    const req = new Request('https://localhost:8080/api/google/gmail/callback?gmail=connected');
+    expect(
+      appOrigin(req, {
+        AUTH_URL: 'https://localhost:8080',
+        APP_URL: 'https://deevaa-os-production.up.railway.app'
+      })
+    ).toBe('https://deevaa-os-production.up.railway.app');
   });
 });
 

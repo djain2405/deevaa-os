@@ -1,4 +1,5 @@
 import {NextResponse} from 'next/server';
+import {appOrigin} from '@/lib/auth-url';
 import {verifyState} from '@/lib/crypto';
 import {completeGmailAuthorization, GMAIL_STATE_COOKIE, GmailError} from '@/lib/google-gmail';
 import {safeEqual, unauthorized} from '@/lib/http';
@@ -22,7 +23,7 @@ export async function GET(req: Request) {
   if (!user) return unauthorized();
   const url = new URL(req.url);
   const done = (result: string) => {
-    const res = NextResponse.redirect(new URL(`/?gmail=${result}`, url.origin), 303);
+    const res = NextResponse.redirect(new URL(`/?gmail=${result}`, appOrigin(req)), 303);
     res.headers.set('Cache-Control', 'private, no-store');
     res.cookies.set(GMAIL_STATE_COOKIE, '', {path: '/api/google/gmail', maxAge: 0});
     return res;

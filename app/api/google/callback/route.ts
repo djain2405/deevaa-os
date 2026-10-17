@@ -1,4 +1,5 @@
 import {NextResponse} from 'next/server';
+import {appOrigin} from '@/lib/auth-url';
 import {safeEqual, unauthorized} from '@/lib/http';
 import {verifyState} from '@/lib/crypto';
 import {completeAuthorization, GoogleError, STATE_COOKIE} from '@/lib/google-calendar';
@@ -22,7 +23,7 @@ export async function GET(req: Request) {
   if (!user) return unauthorized();
   const url = new URL(req.url);
   const done = (result: string) => {
-    const res = NextResponse.redirect(new URL(`/?calendar=${result}`, url.origin), 303);
+    const res = NextResponse.redirect(new URL(`/?calendar=${result}`, appOrigin(req)), 303);
     res.headers.set('Cache-Control', 'private, no-store');
     res.cookies.set(STATE_COOKIE, '', {path: '/api/google', maxAge: 0});
     return res;

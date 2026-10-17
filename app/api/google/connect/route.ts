@@ -1,5 +1,6 @@
 import {randomBytes} from 'node:crypto';
 import {NextResponse} from 'next/server';
+import {appOrigin} from '@/lib/auth-url';
 import {signState} from '@/lib/crypto';
 import {buildAuthUrl, STATE_COOKIE} from '@/lib/google-calendar';
 import {forbiddenOrigin, isSameOrigin, unauthorized} from '@/lib/http';
@@ -12,7 +13,7 @@ export async function POST(req: Request) {
   if (!isSameOrigin(req)) return forbiddenOrigin();
   const user = await getSessionUser();
   if (!user) return unauthorized();
-  const appUrl = new URL(req.url).origin;
+  const appUrl = appOrigin(req);
   try {
     const nonce = randomBytes(16).toString('base64url');
     const state = signState({uid: user.id, nonce, exp: Date.now() + 10 * 60 * 1000});
