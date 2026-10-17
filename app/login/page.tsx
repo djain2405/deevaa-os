@@ -1,5 +1,5 @@
 import {redirect} from 'next/navigation';
-import {auth} from '@/auth';
+import {auth, signIn} from '@/auth';
 import {authOrigin} from '@/lib/auth-url';
 
 export const dynamic = 'force-dynamic';
@@ -24,12 +24,16 @@ export default async function Login({searchParams}: {searchParams: Promise<{erro
         Deevaa is private to one owner account{ownerEmail ? ` (${ownerEmail})` : ''}. Signing in shares only your name and email with this app; calendar access is requested separately.
       </p>
       {configured ? (
-        <a
-          className="cta"
-          href={`/api/auth/signin/google?${new URLSearchParams({callbackUrl: target})}`}
+        <form
+          action={async () => {
+            'use server';
+            await signIn('google', {redirectTo: target});
+          }}
         >
-          Continue with Google
-        </a>
+          <button className="cta" type="submit">
+            Continue with Google
+          </button>
+        </form>
       ) : (
         <p className="warning" role="alert">
           Sign-in is not configured yet. Set AUTH_SECRET, AUTH_GOOGLE_ID, AUTH_GOOGLE_SECRET and ALLOWED_EMAIL, then restart the server.
@@ -37,16 +41,13 @@ export default async function Login({searchParams}: {searchParams: Promise<{erro
       )}
       {error === 'Configuration' && (
         <p className="warning" role="alert">
-          Sign-in hit a server configuration error. If the address bar shows <code>localhost:8080</code>, Railway is missing a public URL: set{' '}
-          <code>APP_URL=https://deevaa-os-production.up.railway.app</code> (no trailing slash), redeploy, and match that host in Google redirect URIs.
-          {origin ? (
+          Sign-in hit a server configuration error. Confirm Google redirect URIs include{' '}
+          <code>{origin || 'https://YOUR_DOMAIN'}/api/auth/callback/google</code>
+          {!origin ? (
             <>
-              {' '}
-              Resolved public URL: <code>{origin}</code> (also exported to <code>AUTH_URL</code> at startup).
+              , and set <code>APP_URL</code> on Railway to the public https origin (no trailing slash).
             </>
-          ) : (
-            <> No <code>APP_URL</code> or <code>RAILWAY_PUBLIC_DOMAIN</code>—add <code>APP_URL</code> and redeploy.</>
-          )}
+          ) : null}
         </p>
       )}
       {error && error !== 'Configuration' && (
