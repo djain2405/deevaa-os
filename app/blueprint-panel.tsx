@@ -13,6 +13,7 @@ type View = {
   suggestions: {id: string; kind: string; text: string; createdAt: string}[];
   notionPageUrl: string | null;
   restoredFromNotion?: boolean;
+  restoreMessage?: string | null;
   notion?: BlueprintNotion;
 };
 
@@ -71,6 +72,8 @@ export function BlueprintPanel({onSaved}: {onSaved: () => void}) {
     setEditing(!hasContent);
     if (body.restoredFromNotion && hasContent) {
       setMessage('Loaded your Life Blueprint from Notion.');
+    } else if (!hasContent && body.restoreMessage) {
+      setMessage(body.restoreMessage);
     }
   }, []);
 
@@ -214,6 +217,7 @@ export function BlueprintPanel({onSaved}: {onSaved: () => void}) {
       {!editing && filled === 0 && (
         <p className="muted">
           No sections yet.{' '}
+          {view.restoreMessage ? view.restoreMessage + ' ' : ''}
           <button type="button" className="small-btn" onClick={() => setEditing(true)}>Add Blueprint</button>
           {' '}or import from markdown below.
         </p>

@@ -171,4 +171,32 @@ describe('Life Blueprint restore from Notion', () => {
     expect(calls).toHaveLength(0);
     expect((await latestBlueprint(user.id))?.data).toMatchObject({goals: ['Keep me']});
   });
+
+  it('finds the Life Blueprint page as a sibling of the tasks database', async () => {
+    const user = await getUser();
+    vi.stubEnv('NOTION_PARENT_PAGE_ID', '');
+    vi.stubEnv('NOTION_DATABASE_ID', PARENT.replace('a', 'd'));
+    const databaseId = process.env.NOTION_DATABASE_ID!;
+    const {impl} = mockFetch([
+      [
+        '/v1/databases',
+        () => json({parent: {type: 'page_id', page_id: PARENT}})
+      ],
+      [
+        '/v1/blocks',
+        (url) => {
+          if (url.pathname.includes(PARENT) && url.pathname.includes('/children')) {
+            return json({results: [{id: PAGE, type: 'child_page', child_page: {title: 'Life Blueprint'}}], has_more: false});
+          }
+          if (url.pathname.includes(PAGE) && url.pathname.includes('/children')) {
+            return json({results: [headingBlock('Long-term goals'), bulletBlock('Ship v1')], has_more: false});
+          }
+          return json({results: [], has_more: false});
+        }
+      ]
+    ]);
+    const result = await restoreLifeBlueprintFromNotion(user.id, {fetchImpl: impl, parentPageId: ''});
+    expect(result.status).toBe('restored');
+    expect(databaseId).toBeTruthy();
+  });
 });

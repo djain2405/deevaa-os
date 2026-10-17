@@ -13,12 +13,14 @@ export const maxDuration = 120;
 async function view(userId: string) {
   const existing = await latestBlueprint(userId);
   let restoredFromNotion = false;
+  let restoreMessage: string | null = null;
   if (!existing || !blueprintHasContent(parseBlueprint(existing.data))) {
     const restored = await restoreLifeBlueprintFromNotion(userId).catch((e) => {
       logEvent('warn', 'blueprint.view.restore', {kind: e instanceof Error ? e.name : 'unknown'});
-      return {status: 'failed' as const, pageId: null};
+      return {status: 'failed' as const, pageId: null, message: 'Could not read the Life Blueprint from Notion.'};
     });
     restoredFromNotion = restored.status === 'restored';
+    restoreMessage = restored.message ?? null;
   }
   const row = await latestBlueprint(userId);
   const suggestions = await listSuggestions(userId);
@@ -34,7 +36,8 @@ async function view(userId: string) {
     data: row ? parseBlueprint(row.data) : emptyBlueprint(),
     suggestions: suggestions.map((s) => ({id: s.id, kind: s.kind, text: s.text, createdAt: s.createdAt.toISOString()})),
     notionPageUrl: notionPageId ? notionPagePublicUrl(notionPageId) : null,
-    restoredFromNotion
+    restoredFromNotion,
+    restoreMessage
   };
 }
 

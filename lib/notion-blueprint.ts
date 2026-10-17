@@ -238,30 +238,52 @@ async function pageTitle(token: string, pageId: string, opts: FetchOptions) {
   return pageTitleFromProps(page?.properties ?? {});
 }
 
+async function parentPageFromDatabase(token: string, opts: FetchOptions) {
+  const databaseId = notionId(process.env.NOTION_DATABASE_ID);
+  const dataSourceId = notionId(process.env.NOTION_DATA_SOURCE_ID);
+  if (databaseId) {
+    try {
+      const db = await call('notion.blueprint.database', `${API}/databases/${databaseId}`, {headers: headers(token)}, opts);
+      const parent = db?.parent?.page_id;
+      if (typeof parent === 'string') return parent;
+    } catch {
+      // Fall through to data source lookup.
+    }
+  }
+  if (dataSourceId) {
+    try {
+      const ds = await call('notion.blueprint.data_source', `${API}/data_sources/${dataSourceId}`, {headers: headers(token)}, opts);
+      const parent = ds?.parent?.page_id ?? ds?.parent?.database_id;
+      if (typeof parent === 'string' && ds?.parent?.type === 'page_id') return parent;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+async function findLifeBlueprintChild(token: string, parentPageId: string, opts: FetchOptions) {
+  const children = await listBlockChildren(token, parentPageId, opts);
+  const child = children.find((b) => b.type === 'child_page' && normLabel(b.child_page?.title ?? '') === normLabel(PAGE_TITLE));
+  return typeof child?.id === 'string' ? child.id : null;
+}
+
 async function findLifeBlueprintPageId(token: string, parentPageId: string | undefined, storedPageId: string | null, opts: FetchOptions) {
   if (storedPageId) {
     try {
       const title = await pageTitle(token, storedPageId, opts);
       if (normLabel(title) === normLabel(PAGE_TITLE)) return storedPageId;
     } catch {
-      // Page id from a previous environment may be stale; search instead.
+      // Page id from a previous environment may be stale; look under the parent instead.
     }
   }
-  if (parentPageId) {
-    const children = await listBlockChildren(token, parentPageId, opts);
-    const child = children.find((b) => b.type === 'child_page' && normLabel(b.child_page?.title ?? '') === normLabel(PAGE_TITLE));
-    if (typeof child?.id === 'string') return child.id;
-  }
-  const search = await call(
-    'notion.blueprint.search',
-    `${API}/search`,
-    {method: 'POST', headers: headers(token), body: JSON.stringify({query: PAGE_TITLE, filter: {property: 'object', value: 'page'}, page_size: 20})},
-    opts
+  const fromDatabase = await parentPageFromDatabase(token, opts);
+  const parents = [parentPageId, fromDatabase].filter(
+    (value, index, all): value is string => Boolean(value) && all.indexOf(value) === index
   );
-  for (const result of search?.results ?? []) {
-    if (result?.object === 'page' && typeof result.id === 'string' && normLabel(pageTitleFromProps(result.properties ?? {})) === normLabel(PAGE_TITLE)) {
-      return result.id as string;
-    }
+  for (const parent of parents) {
+    const id = await findLifeBlueprintChild(token, parent, opts);
+    if (id) return id;
   }
   return null;
 }
@@ -272,28 +294,40 @@ async function findLifeBlueprintPageId(token: string, parentPageId: string | und
  */
 export async function restoreLifeBlueprintFromNotion(userId: string, deps: RestoreDeps = {}) {
   const current = await latestBlueprint(userId);
-  if (current && blueprintHasContent(parseBlueprint(current.data))) return {status: 'skipped' as const, pageId: null};
+  if (current && blueprintHasContent(parseBlueprint(current.data))) {
+    return {status: 'skipped' as const, pageId: null, message: null};
+  }
   const token = deps.token ?? process.env.NOTION_TOKEN;
   const parentPageId = notionId(deps.parentPageId ?? process.env.NOTION_PARENT_PAGE_ID);
-  if (!token) return {status: 'skipped' as const, pageId: null};
+  if (!token) {
+    return {status: 'skipped' as const, pageId: null, message: 'NOTION_TOKEN is not set on the server.'};
+  }
 
   const opts: FetchOptions = {timeoutMs: 60_000, ...deps};
   try {
     const storedPageId = deps.storedPageId !== undefined ? deps.storedPageId : await getBlueprintNotionPageId(userId);
     const pageId = await findLifeBlueprintPageId(token, parentPageId, storedPageId ?? null, opts);
-    if (!pageId) return {status: 'skipped' as const, pageId: null};
+    if (!pageId) {
+      return {
+        status: 'skipped' as const,
+        pageId: null,
+        message: 'No Notion page titled Life Blueprint was found next to Deevaa Tasks. Share the parent page with the integration and set NOTION_PARENT_PAGE_ID.'
+      };
+    }
 
     const persist = deps.persistPageId ?? ((id: string) => setBlueprintNotionPageId(userId, id));
     if (pageId !== storedPageId) await persist(pageId);
 
     const blocks = await listBlockChildren(token, pageId, opts);
     const data = parseBlueprintFromNotionBlocks(blocks);
-    if (!blueprintHasContent(data)) return {status: 'skipped' as const, pageId};
+    if (!blueprintHasContent(data)) {
+      return {status: 'skipped' as const, pageId, message: 'The Notion Life Blueprint page was found but has no sections yet.'};
+    }
     const saved = await saveBlueprint(userId, data, current?.version ?? 0);
-    if (!saved) return {status: 'skipped' as const, pageId};
-    return {status: 'restored' as const, pageId};
+    if (!saved) return {status: 'skipped' as const, pageId, message: null};
+    return {status: 'restored' as const, pageId, message: null};
   } catch (e) {
     logEvent('warn', 'blueprint.restore.notion', {kind: e instanceof Error ? e.name : 'unknown'});
-    return {status: 'failed' as const, pageId: null};
+    return {status: 'failed' as const, pageId: null, message: 'Could not read the Life Blueprint from Notion.'};
   }
 }
