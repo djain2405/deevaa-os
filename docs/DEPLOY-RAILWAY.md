@@ -65,7 +65,7 @@ DATABASE_URL="postgresql://..." npm run db:migrate
 
 1. Push to `main` or trigger **Deploy** in Railway.
 2. Open `https://YOUR_RAILWAY_DOMAIN/login` and sign in with `ALLOWED_EMAIL`.
-3. **Connections**: connect Google Calendar; turn on Notion task updates / Blueprint publish if you want writes.
+3. **Connections**: connect Google Calendar and Gmail (read-only); turn on Notion task updates / Blueprint publish if you want writes.
 4. **Life Blueprint**: on first sign-in an empty Postgres copies the Notion page titled `Life Blueprint` (under `NOTION_PARENT_PAGE_ID`). Saving still publishes back to that page.
 
 ### Scheduler (`/api/cron`)
@@ -80,14 +80,26 @@ curl -i -H "Authorization: Bearer $CRON_SECRET" "https://YOUR_RAILWAY_DOMAIN/api
 
 Expect `200` with `"outcome":"created"` the first time for tomorrow’s date, then `"duplicate"` on repeat. The dashboard **Scheduled briefing** row should show a cron run after this (with the browser closed).
 
-Alternative: keep using [`vercel.json`](../vercel.json) cron if you deploy to Vercel instead.
+### Agent jobs (`/api/jobs`)
+
+A second cron, `*/15 * * * *`, runs [`scripts/trigger-jobs.sh`](../scripts/trigger-jobs.sh) against `GET /api/jobs`. Agents are registered in code (`lib/agents/registry.ts`). `gmail.morning` runs when the local hour in America/Los_Angeles is 7 and there is no successful run for that agent and local date.
+
+Enable the **Gmail API** in Google Cloud, add redirect `https://YOUR_RAILWAY_DOMAIN/api/google/gmail/callback` (and localhost), then **Connect Gmail (read-only)** on this site. Confirm with:
+
+```bash
+curl -i -H "Authorization: Bearer $CRON_SECRET" "https://YOUR_RAILWAY_DOMAIN/api/jobs?force=1"
+```
+
+or the dashboard **Run Gmail digest** button. The digest is merged into **today’s** briefing only; it does not send mail or create Notion tasks.
+
+Alternative: keep using [`vercel.json`](../vercel.json) cron if you deploy to Vercel instead (nightly briefing only; Vercel Hobby does not run a 15-minute job).
 
 ## 6. First sign-in on Railway
 
 The production database starts empty. After you sign in:
 
 - Life Blueprint is copied from the Notion page titled `Life Blueprint` (needs `NOTION_TOKEN` and `NOTION_PARENT_PAGE_ID`).
-- Click **Connect Google Calendar** once on this site.
+- Click **Connect Google Calendar** and **Connect Gmail (read-only)** once on this site.
 - Turn on **Notion task updates** in Connections if you want chat/Done/Blueprint publish to write to Notion.
 
 Notion tasks themselves are already in your workspace; they are not stored in Postgres.
@@ -95,7 +107,7 @@ Notion tasks themselves are already in your workspace; they are not stored in Po
 ## Semi-autonomous milestones (later)
 
 - Keep Postgres as the execution store (runs, locks, audit, Blueprint versions).
-- Add more schedules as HTTP calls to `/api/cron` or new locked job routes—not laptop cron.
+- Add more schedules as another row in `lib/agents/registry.ts` (same `/api/jobs` dispatcher)—not laptop cron.
 - Long-running agent work: add a second Railway **worker** service that claims `runs` rows; keep the web service for UI and short API calls.
 
 ## Troubleshooting
@@ -104,6 +116,6 @@ Notion tasks themselves are already in your workspace; they are not stored in Po
 |---|---|
 | `DATABASE_URL is required in production` | `DATABASE_URL` set on web service; redeploy |
 | `invalid_client` on sign-in | Redirect URIs and `AUTH_GOOGLE_*`; shell env not overriding Railway vars |
-| Calendar connect fails | `APP_URL` matches public URL; `TOKEN_ENCRYPTION_KEY` set before first connect |
+| Calendar or Gmail connect fails | `APP_URL` matches public URL; Gmail API enabled; callback URI added; `TOKEN_ENCRYPTION_KEY` set before first connect |
 | Cron never runs | Railway cron enabled; `APP_URL` + `CRON_SECRET`; run manual `curl` first |
 | Blueprint save slow / timeout | Railway has no 10s cap; Vercel Hobby may—prefer Railway for this app |

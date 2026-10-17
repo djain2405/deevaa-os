@@ -115,7 +115,18 @@ const CALENDAR_MESSAGES: Record<string, string> = {
   unavailable: 'Google could not be reached. Try again shortly.'
 };
 
-const TRIGGER_LABEL: Record<string, string> = {cron: 'scheduled run', manual: 'you', initial: 'first load'};
+const GMAIL_MESSAGES: Record<string, string> = {
+  connected: 'Gmail connected with read-only access. Run the morning digest to include today’s mail.',
+  denied: 'Gmail access was not granted. Nothing was stored.',
+  invalid_state: 'That connection attempt expired or did not match this session. Try again.',
+  scope: 'Google granted more than read-only Gmail access, so the connection was refused.',
+  no_refresh_token: 'Google did not grant offline access. Remove Deevaa under Google Account > Security > Third-party access, then connect again.',
+  config: 'Google OAuth is not configured on the server.',
+  revoked: 'Google rejected the authorization. Try connecting again.',
+  unavailable: 'Google could not be reached. Try again shortly.'
+};
+
+const TRIGGER_LABEL: Record<string, string> = {cron: 'scheduled run', manual: 'you', initial: 'first load', agent: 'email agent'};
 
 function StateBadge({state}: {state: 'connected' | 'not_connected' | 'error' | 'pending'}) {
   const label = {connected: 'Connected', not_connected: 'Not connected', error: 'Error', pending: 'Configured, not read yet'}[state];
@@ -189,6 +200,7 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
   const [data, setData] = useState<Payload | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [gmailBusy, setGmailBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [minutes, setMinutes] = useState<number>(10);
@@ -280,8 +292,12 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const cal = params.get('calendar');
+    const gmail = params.get('gmail');
     if (cal) {
       setNotice(CALENDAR_MESSAGES[cal] ?? 'Google Calendar connection finished.');
+      window.history.replaceState(null, '', '/');
+    } else if (gmail) {
+      setNotice(GMAIL_MESSAGES[gmail] ?? 'Gmail connection finished.');
       window.history.replaceState(null, '', '/');
     }
     loadWrites();
@@ -298,6 +314,31 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
     const res = await fetch('/api/google/disconnect', {method: 'POST'});
     setNotice(res.ok ? 'Google Calendar disconnected.' : 'Could not disconnect Google Calendar.');
     await load();
+  }
+
+  async function disconnectGmail() {
+    if (!window.confirm('Disconnect Gmail? Deevaa will forget its read-only access and will not send or change any mail.')) return;
+    const res = await fetch('/api/google/gmail/disconnect', {method: 'POST'});
+    setNotice(res.ok ? 'Gmail disconnected.' : 'Could not disconnect Gmail.');
+    await load();
+  }
+
+  async function runGmailDigest() {
+    setGmailBusy(true);
+    setError('');
+    try {
+      const res = await fetch('/api/jobs/gmail', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID()}
+      });
+      if (res.status === 401) return void (window.location.href = '/login');
+      const body = await res.json().catch(() => null);
+      if (!res.ok) setError(body?.error?.message ?? 'The Gmail digest could not be generated.');
+      else setNotice(body?.outcome === 'duplicate' ? 'That Gmail digest already ran.' : 'Morning email digest updated.');
+      await load();
+    } finally {
+      setGmailBusy(false);
+    }
   }
 
   function choose(skip: string[] = [], feedback: Feedback[] = data?.feedback ?? [], tasks = data?.briefing?.tasks) {
@@ -366,6 +407,8 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
       return taskMatchesFilter(t, taskFilter, attentionIds);
     }) ?? [];
   const calendarFallback = conn?.calendar.state === 'revoked' ? 'error' : conn?.calendar.state === 'connected' ? 'pending' : 'not_connected';
+  const gmailFallback = conn?.gmail.state === 'revoked' ? 'error' : conn?.gmail.state === 'connected' ? 'pending' : 'not_connected';
+  const digest = b?.emailDigest;
 
   function skipTop(taskId: string) {
     setTopSkipped((prev) => (prev.includes(taskId) ? prev : [...prev, taskId]));
@@ -421,6 +464,78 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
             </ul>
           </section>
         ) : null}
+
+        {data && (
+          <section className="panel" aria-labelledby="email-title">
+            <div className="panel-head">
+              <h2 id="email-title">Email (this morning)</h2>
+              <button type="button" className="small-btn" onClick={runGmailDigest} disabled={gmailBusy || busy || loading} aria-busy={gmailBusy}>
+                {gmailBusy ? 'Reading…' : 'Run Gmail digest'}
+              </button>
+            </div>
+            {conn?.gmail.state !== 'connected' && !digest && (
+              <p className="muted">Gmail is not connected. Connect it below (read-only) to fill this section. Deevaa never sends or marks mail read.</p>
+            )}
+            {digest?.status === 'unavailable' && <p className="muted">{digest.warnings[0] ?? 'Gmail could not be read. Nothing was invented.'}</p>}
+            {digest && digest.status !== 'unavailable' && (
+              <>
+                <p className="muted">
+                  Scanned this morning at {stamp(digest.generatedAt)}. Links open Gmail. Deevaa does not send, reply, or create Notion tasks from mail.
+                </p>
+                {digest.actions.length > 0 && (
+                  <>
+                    <h2 className="space" id="email-actions-title">Time-sensitive</h2>
+                    <ul className="plain">
+                      {digest.actions.map((a) => (
+                        <li className="task" key={a.permalink + a.title}>
+                          <div>
+                            <strong>
+                              <a href={a.permalink} target="_blank" rel="noreferrer">
+                                {a.title}
+                              </a>
+                            </strong>
+                            <small>
+                              {a.due ? `Due ${a.due}. ` : ''}
+                              {a.why}
+                            </small>
+                            <small className="muted">“{a.evidence}”</small>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+                {digest.summaries.length > 0 && (
+                  <>
+                    <h2 className="space" id="email-miss-title">Do not miss</h2>
+                    <ul className="plain">
+                      {digest.summaries.map((s) => (
+                        <li className="task" key={s.permalink + s.subject}>
+                          <div>
+                            <strong>
+                              <a href={s.permalink} target="_blank" rel="noreferrer">
+                                {s.subject}
+                              </a>
+                            </strong>
+                            <small>
+                              {s.from} — {s.why}
+                            </small>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+                {digest.actions.length === 0 && digest.summaries.length === 0 && (
+                  <p className="muted">No time-sensitive actions or easy-to-miss notes in the last day’s primary inbox.</p>
+                )}
+              </>
+            )}
+            {!digest && conn?.gmail.state === 'connected' && (
+              <p className="muted">No digest yet. The 7:00 AM Pacific job will fill this, or run it now.</p>
+            )}
+          </section>
+        )}
 
         {b && (
           <div id="briefing">
@@ -671,7 +786,7 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
           <ChatPanel writes={writes} onChanged={load} />
         </details>
 
-        <details className="panel" open={conn?.calendar.state !== 'connected' || conn?.store !== 'postgres'}>
+        <details className="panel" open={conn?.calendar.state !== 'connected' || conn?.gmail.state !== 'connected' || conn?.store !== 'postgres'}>
           <summary>Connections & scheduling</summary>
           <section aria-labelledby="sources-title">
             <h2 id="sources-title" className="visually-hidden">Connections</h2>
@@ -697,6 +812,19 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
                   <form method="post" action="/api/google/connect">
                     <p className="muted small">Connect once on this site. Calendar access from your laptop does not carry over.</p>
                     <button type="submit">{conn?.calendar.state === 'revoked' ? 'Reconnect' : 'Connect'} Google Calendar</button>
+                  </form>
+                )}
+              </SourceRow>
+              <SourceRow name="Gmail (read-only)" fallback={gmailFallback}>
+                {conn?.gmail.state === 'connected' ? (
+                  <div className="row-actions">
+                    <span className="muted small">Inbox scanned for the morning digest only</span>
+                    <button type="button" className="ghost" onClick={disconnectGmail}>Disconnect</button>
+                  </div>
+                ) : (
+                  <form method="post" action="/api/google/gmail/connect">
+                    <p className="muted small">Read-only. Deevaa never sends, labels, or marks mail read.</p>
+                    <button type="submit">{conn?.gmail.state === 'revoked' ? 'Reconnect' : 'Connect'} Gmail (read-only)</button>
                   </form>
                 )}
               </SourceRow>

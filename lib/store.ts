@@ -1,4 +1,4 @@
-import {and, desc, eq, gte, sql} from 'drizzle-orm';
+import {and, desc, eq, gte, notInArray, sql} from 'drizzle-orm';
 import {randomUUID} from 'node:crypto';
 import {getDb} from './db/client';
 import {auditEvents, briefings, locks, oauthCredentials, runs, users} from './db/schema';
@@ -132,12 +132,14 @@ export async function finishRun(runId: string, result: {status: 'succeeded' | 'f
   return row;
 }
 
-export async function latestRun(userId: string, localDate: string) {
+export async function latestRun(userId: string, localDate: string, opts?: {excludeTriggers?: RunRow['trigger'][]}) {
   const db = await getDb();
+  const conds = [eq(runs.userId, userId), eq(runs.localDate, localDate)];
+  if (opts?.excludeTriggers?.length) conds.push(notInArray(runs.trigger, opts.excludeTriggers));
   const [row] = await db
     .select()
     .from(runs)
-    .where(and(eq(runs.userId, userId), eq(runs.localDate, localDate)))
+    .where(and(...conds))
     .orderBy(desc(runs.startedAt))
     .limit(1);
   return row ?? null;

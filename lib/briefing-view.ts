@@ -1,6 +1,7 @@
 import {DateTime} from 'luxon';
 import {storeKind} from './db/client';
 import {PROVIDER} from './google-calendar';
+import {GMAIL_PROVIDER} from './google-gmail';
 import {notionConfigFromEnv} from './notion';
 import {getCredential, latestRun, type BriefingRow, type RunRow} from './store';
 import {localDate, tomorrowLocal} from './time';
@@ -11,6 +12,7 @@ const STALE_HOURS = 18;
 export type Connections = {
   notion: 'configured' | 'not_configured';
   calendar: {state: 'connected' | 'revoked' | 'not_connected'; calendarCount: number; updatedAt: string | null};
+  gmail: {state: 'connected' | 'revoked' | 'not_connected'; updatedAt: string | null};
   ai: 'enabled' | 'disabled';
   store: 'postgres' | 'embedded';
   scheduler: {lastRunAt: string | null; lastStatus: RunRow['status'] | null};
@@ -18,15 +20,21 @@ export type Connections = {
 
 export async function getConnections(userId: string): Promise<Connections> {
   const cfg = notionConfigFromEnv();
-  const cred = await getCredential(userId, PROVIDER);
-  const tomorrow = await latestRun(userId, tomorrowLocal());
-  const today = await latestRun(userId, localDate());
+  const [cred, gmail, tomorrow, today] = await Promise.all([
+    getCredential(userId, PROVIDER),
+    getCredential(userId, GMAIL_PROVIDER),
+    latestRun(userId, tomorrowLocal(), {excludeTriggers: ['agent']}),
+    latestRun(userId, localDate(), {excludeTriggers: ['agent']})
+  ]);
   const cron = [tomorrow, today].find((r) => r?.trigger === 'cron') ?? null;
   return {
     notion: cfg.token && (cfg.dataSourceId || cfg.databaseId) ? 'configured' : 'not_configured',
     calendar: cred
       ? {state: cred.status === 'revoked' ? 'revoked' : 'connected', calendarCount: cred.calendarIds.length, updatedAt: cred.updatedAt.toISOString()}
       : {state: 'not_connected', calendarCount: 0, updatedAt: null},
+    gmail: gmail
+      ? {state: gmail.status === 'revoked' ? 'revoked' : 'connected', updatedAt: gmail.updatedAt.toISOString()}
+      : {state: 'not_connected', updatedAt: null},
     ai: process.env.OPENAI_API_KEY ? 'enabled' : 'disabled',
     store: storeKind(),
     scheduler: {lastRunAt: cron?.finishedAt?.toISOString() ?? cron?.startedAt.toISOString() ?? null, lastStatus: cron?.status ?? null}

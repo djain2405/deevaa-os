@@ -7,7 +7,7 @@ export const users = pgTable('users', {
   createdAt: timestamp('created_at', {withTimezone: true}).notNull().defaultNow()
 });
 
-/** Holds encrypted token material only; plaintext never leaves lib/google-calendar.ts. */
+/** Holds encrypted token material only; plaintext never leaves the Google OAuth modules. */
 export const oauthCredentials = pgTable(
   'oauth_credentials',
   {
@@ -29,7 +29,7 @@ export const runs = pgTable('runs', {
   id: uuid('id').primaryKey().defaultRandom(),
   userId: uuid('user_id').notNull().references(() => users.id, {onDelete: 'cascade'}),
   localDate: text('local_date').notNull(),
-  trigger: text('trigger').$type<'cron' | 'manual' | 'initial' | 'intake'>().notNull(),
+  trigger: text('trigger').$type<'cron' | 'manual' | 'initial' | 'intake' | 'agent'>().notNull(),
   idempotencyKey: text('idempotency_key').notNull().unique(),
   status: text('status').$type<'running' | 'succeeded' | 'failed'>().notNull(),
   attempts: integer('attempts').notNull().default(1),

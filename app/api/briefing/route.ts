@@ -17,7 +17,7 @@ export async function GET(req: Request) {
   try {
     const [row, run, connections, feedback] = await Promise.all([
       getBriefing(user.id, date, BRIEFING_VERSION),
-      latestRun(user.id, date),
+      latestRun(user.id, date, {excludeTriggers: ['agent']}),
       getConnections(user.id),
       recentFeedback(user.id, new Date(Date.now() - 14 * 24 * 3600 * 1000))
     ]);

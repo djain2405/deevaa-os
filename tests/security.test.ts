@@ -18,6 +18,11 @@ import {GET as permissionsGet, POST as permissionsPost} from '@/app/api/permissi
 import {GET as callback} from '@/app/api/google/callback/route';
 import {POST as connect} from '@/app/api/google/connect/route';
 import {POST as disconnect} from '@/app/api/google/disconnect/route';
+import {GET as gmailCallback} from '@/app/api/google/gmail/callback/route';
+import {POST as gmailConnect} from '@/app/api/google/gmail/connect/route';
+import {POST as gmailDisconnect} from '@/app/api/google/gmail/disconnect/route';
+import {GET as jobsGet, POST as jobsPost} from '@/app/api/jobs/route';
+import {POST as gmailJob} from '@/app/api/jobs/gmail/route';
 import {bearerMatches, isSameOrigin} from '@/lib/http';
 import {sanitizeFields} from '@/lib/log';
 import {isPublicPath} from '@/lib/public-paths';
@@ -40,6 +45,10 @@ describe('unauthorized access', () => {
       connect(new Request(`${BASE}/api/google/connect`, {method: 'POST', headers: sameOrigin})),
       callback(new Request(`${BASE}/api/google/callback?code=x&state=y`)),
       disconnect(new Request(`${BASE}/api/google/disconnect`, {method: 'POST', headers: sameOrigin})),
+      gmailConnect(new Request(`${BASE}/api/google/gmail/connect`, {method: 'POST', headers: sameOrigin})),
+      gmailCallback(new Request(`${BASE}/api/google/gmail/callback?code=x&state=y`)),
+      gmailDisconnect(new Request(`${BASE}/api/google/gmail/disconnect`, {method: 'POST', headers: sameOrigin})),
+      gmailJob(new Request(`${BASE}/api/jobs/gmail`, {method: 'POST', headers: {...sameOrigin, 'idempotency-key': 'abcdefgh12'}})),
       chatGet(),
       chatPost(new Request(`${BASE}/api/chat`, {method: 'POST', headers: {...sameOrigin, 'idempotency-key': 'abcdefgh12'}, body: JSON.stringify({message: 'hi'})})),
       chatDelete(new Request(`${BASE}/api/chat`, {method: 'DELETE', headers: sameOrigin})),
@@ -70,6 +79,8 @@ describe('unauthorized access', () => {
     expect(res.status).toBe(403);
     const res2 = await connect(new Request(`${BASE}/api/google/connect`, {method: 'POST', headers: {'sec-fetch-site': 'cross-site'}}));
     expect(res2.status).toBe(403);
+    expect((await gmailConnect(new Request(`${BASE}/api/google/gmail/connect`, {method: 'POST', headers: {'sec-fetch-site': 'cross-site'}}))).status).toBe(403);
+    expect((await gmailJob(new Request(`${BASE}/api/jobs/gmail`, {method: 'POST', headers: {origin: 'https://evil.example', 'idempotency-key': 'abcdefgh12'}}))).status).toBe(403);
     const evil = {origin: 'https://evil.example', 'idempotency-key': 'abcdefgh12'};
     for (const res of await Promise.all([
       chatPost(new Request(`${BASE}/api/chat`, {method: 'POST', headers: evil, body: JSON.stringify({message: 'I need to buy a boat'})})),
@@ -92,10 +103,10 @@ describe('unauthorized access', () => {
   });
 
   it('gates every page and API path except login, auth callbacks and the scheduler', () => {
-    for (const p of ['/', '/api/briefing', '/api/briefing/regenerate', '/api/google/connect', '/api/google/callback', '/api/cronjob', '/login/extra', '/api/chat', '/api/permissions', '/api/chat/undo']) {
+    for (const p of ['/', '/api/briefing', '/api/briefing/regenerate', '/api/google/connect', '/api/google/callback', '/api/google/gmail/connect', '/api/jobs/gmail', '/api/cronjob', '/login/extra', '/api/chat', '/api/permissions', '/api/chat/undo']) {
       expect(isPublicPath(p)).toBe(false);
     }
-    for (const p of ['/login', '/api/auth/signin', '/api/auth/callback/google', '/api/cron', '/api/intake']) expect(isPublicPath(p)).toBe(true);
+    for (const p of ['/login', '/api/auth/signin', '/api/auth/callback/google', '/api/cron', '/api/jobs', '/api/intake']) expect(isPublicPath(p)).toBe(true);
   });
 });
 
@@ -104,8 +115,11 @@ describe('scheduler identity', () => {
     vi.stubEnv('CRON_SECRET', 'a-very-long-cron-secret-value-123');
     expect((await cronGet(new Request(`${BASE}/api/cron`))).status).toBe(401);
     expect((await cronPost(new Request(`${BASE}/api/cron`, {method: 'POST', headers: {authorization: 'Bearer wrong-secret-value-000000'}}))).status).toBe(401);
+    expect((await jobsGet(new Request(`${BASE}/api/jobs`))).status).toBe(401);
+    expect((await jobsPost(new Request(`${BASE}/api/jobs`, {method: 'POST', headers: {authorization: 'Bearer wrong-secret-value-000000'}}))).status).toBe(401);
     vi.stubEnv('CRON_SECRET', '');
     expect((await cronGet(new Request(`${BASE}/api/cron`, {headers: {authorization: 'Bearer '}}))).status).toBe(401);
+    expect((await jobsGet(new Request(`${BASE}/api/jobs`, {headers: {authorization: 'Bearer '}}))).status).toBe(401);
   });
 
   it('refuses short secrets even when they match', () => {

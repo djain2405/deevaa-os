@@ -1,7 +1,7 @@
 type Level = 'info' | 'warn' | 'error';
 type Field = string | number | boolean | null | undefined;
 
-const SENSITIVE_KEY = /token|secret|password|authorization|cookie|code|state|description|attendee|email|body|summary|title/i;
+const SENSITIVE_KEY = /token|secret|password|authorization|cookie|code|state|description|attendee|email|body|summary|title|subject|from|snippet|permalink/i;
 
 export function sanitizeFields(fields: Record<string, unknown>): Record<string, Field> {
   const out: Record<string, Field> = {};

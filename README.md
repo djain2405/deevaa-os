@@ -1,6 +1,6 @@
 # Deevaa OS v0.3: Conversational Chief of Staff
 
-A private, single-owner Next.js app that reads your Notion tasks and Google Calendar and prepares one grounded daily briefing: top outcomes, Focus / Close / Maintain / Expand blocks placed only in real free time, a "Needs attention" list, and a "find my next action" picker.
+A private, single-owner Next.js app that reads your Notion tasks, Google Calendar, and (optionally) Gmail and prepares one grounded daily briefing: top outcomes, Focus / Close / Maintain / Expand blocks placed only in real free time, a "Needs attention" list, a morning email digest, and a "find my next action" picker.
 
 New in v0.3: you can **tell Deevaa what changed in plain language** ("I submitted the PR, waiting on review; my parents arrive October 21 so I need to prepare the apartment"). Deevaa extracts tasks and status changes, matches them against Notion, and, only if you have turned on task updates, creates or updates the Notion tasks, reads each one back to verify it, shows you exactly what changed with links, and refreshes the plan. Every chat change can be undone.
 
@@ -11,6 +11,7 @@ What Deevaa will **not** do: send messages, create or change calendar events, pu
 ```
 Browser ── session cookie ──▶ middleware (Auth.js) ──▶ /api/briefing, /api/chat, /api/blueprint, /api/feedback
 Scheduler ── Bearer CRON_SECRET ──▶ /api/cron ──▶ lock ──▶ Notion + Google Calendar (read-only) ──▶ planner ──▶ store
+            ── Bearer CRON_SECRET ──▶ /api/jobs ──▶ agent registry ──▶ Gmail (read-only) ──▶ today’s briefing email digest
 Your tools ── Bearer + HMAC ──▶ /api/intake ──▶ same intake pipeline as chat
 
 Chat message ─▶ extract (rules, or OpenAI JSON checked by a strict schema) ─▶ ground against your exact words
@@ -102,19 +103,21 @@ Without `DATABASE_URL`, local development uses an embedded Postgres (PGlite) in 
 
 If your shell exports any of the app's variables (for example from another project), they override `.env.local`. Start with a clean environment if sign-in reports `invalid_client`.
 
-## Google OAuth setup (sign-in and read-only calendar)
+## Google OAuth setup (sign-in, calendar, and Gmail)
 
-1. In [Google Cloud Console](https://console.cloud.google.com/), create a project and enable the **Google Calendar API**.
-2. Configure the **OAuth consent screen** (External, Testing is fine for one user). Add your Google account as a test user. Add scopes `openid`, `email`, `profile` and `https://www.googleapis.com/auth/calendar.readonly`.
-3. Create an **OAuth client ID** of type *Web application*. Add both authorized redirect URIs, for local and production:
+1. In [Google Cloud Console](https://console.cloud.google.com/), create a project and enable the **Google Calendar API** and the **Gmail API**.
+2. Configure the **OAuth consent screen** (External, Testing is fine for one user). Add your Google account as a test user. Add scopes `openid`, `email`, `profile`, `https://www.googleapis.com/auth/calendar.readonly`, and `https://www.googleapis.com/auth/gmail.readonly`.
+3. Create an **OAuth client ID** of type *Web application*. Add authorized redirect URIs, for local and production:
    - `http://localhost:3000/api/auth/callback/google` (app sign-in)
    - `http://localhost:3000/api/google/callback` (calendar connection)
+   - `http://localhost:3000/api/google/gmail/callback` (Gmail connection)
    - `https://YOUR_DOMAIN/api/auth/callback/google`
    - `https://YOUR_DOMAIN/api/google/callback`
+   - `https://YOUR_DOMAIN/api/google/gmail/callback`
 4. Put the client ID and secret in `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET`, and your address in `ALLOWED_EMAIL`.
-5. Sign in, then select **Connect Google Calendar** on the dashboard. Deevaa requests only `calendar.readonly`, refuses any broader grant, and stores the refresh token encrypted (AES-256-GCM, bound to your user id).
+5. Sign in, then select **Connect Google Calendar** and **Connect Gmail (read-only)** on the dashboard. Each grant is separate. Deevaa requests only the readonly scope, refuses modify/send/compose, and stores the refresh token encrypted (AES-256-GCM, bound to your user id and provider).
 
-Sign-in itself requests identity scopes only. Calendar access is a separate, revocable grant. **Disconnect** revokes it with Google and deletes the stored token.
+Sign-in itself requests identity scopes only. Calendar and Gmail are independent, revocable grants. **Disconnect** revokes that grant with Google and deletes the stored token. The Gmail agent never sends, labels, or marks mail read.
 
 ## Notion setup
 
@@ -157,17 +160,21 @@ Chat writes skip properties your database does not have and report them. A Statu
 3. In **Project Settings, Environment Variables** (Production), set: `APP_URL` (your `https://` origin), `AUTH_SECRET`, `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, `ALLOWED_EMAIL`, `DATABASE_URL`, `TOKEN_ENCRYPTION_KEY`, `CRON_SECRET`, `NOTION_TOKEN`, `NOTION_DATA_SOURCE_ID`, and optionally `OPENAI_API_KEY` and `INTAKE_TOKEN`. Generate production secrets fresh; do not reuse local ones.
 4. Apply the schema once against production: `DATABASE_URL="…" npm run db:migrate`. Migrations are idempotent.
 5. Add the production redirect URIs in Google Cloud (see above). Deploy.
-6. Sign in on the deployed URL, connect Google Calendar, and turn on task updates there if you want them. Tokens and permissions are per environment.
+6. Sign in on the deployed URL, connect Google Calendar and Gmail, and turn on task updates there if you want them. Tokens and permissions are per environment.
 
 ## Scheduling
 
 [`vercel.json`](vercel.json) declares a daily cron at `0 5 * * *` (05:00 UTC, which is 10 PM PDT or 9 PM PST). Vercel sends `GET /api/cron` with `Authorization: Bearer $CRON_SECRET`. Each call generates **tomorrow's** briefing in America/Los_Angeles, including the Needs attention list.
 
-- Idempotency key `cron:{user}:{date}` plus a database lock mean duplicate or concurrent triggers produce one run and one briefing.
+On Railway, [`railway.toml`](railway.toml) also runs `*/15 * * * *` → `GET /api/jobs`. The in-app agent registry runs `gmail.morning` when the local hour in America/Los_Angeles is 7. Idempotency key `agent:{id}:{user}:{yyyy-MM-dd}` plus a lock mean one successful digest per agent per local date. The digest is merged into **today’s** stored briefing (`emailDigest`) and does not regenerate the plan or write Notion tasks.
+
+- Idempotency key `cron:{user}:{date}` plus a database lock mean duplicate or concurrent briefing triggers produce one run and one briefing.
 - A failed or lock-blocked run returns a non-2xx status and can be retried.
 - If a source that worked before starts failing, the previous good briefing is kept and the dashboard warns.
 
 **Scheduling is not active until the app is deployed and a cron call has been observed while no browser is open.** The dashboard's "Scheduled briefing" row shows the last recorded scheduler run. To verify after deploying: `curl -i -H "Authorization: Bearer $CRON_SECRET" https://YOUR_DOMAIN/api/cron` should return `200` with `"outcome":"created"`, then `"duplicate"`. Then wait for the 05:00 UTC run and confirm a run with trigger `cron` appears.
+
+Gmail digest: connect Gmail on the Railway site, then `curl -i -H "Authorization: Bearer $CRON_SECRET" "https://YOUR_DOMAIN/api/jobs?force=1"` (or use **Run Gmail digest** on the dashboard). A 7:00 AM Pacific run should fill **Email (this morning)**.
 
 ## API
 
@@ -182,19 +189,23 @@ Chat writes skip properties your database does not have and report them. A Statu
 | `POST /api/feedback` | session, same origin | Next-action feedback. 200 per day. |
 | `POST /api/intake` | `Bearer INTAKE_TOKEN` + HMAC signature | External intake (see above) |
 | `GET` / `POST /api/cron` | `Bearer CRON_SECRET` | Generate tomorrow's briefing |
+| `GET` / `POST /api/jobs` | `Bearer CRON_SECRET` | Run due agents (Gmail morning digest at 7:00 PT) |
+| `POST /api/jobs/gmail` | session, same origin, `Idempotency-Key` | Manual Gmail digest for today. 10 per day. |
 | `POST /api/google/connect`, `GET /api/google/callback`, `POST /api/google/disconnect` | session (+ signed state) | Read-only calendar OAuth |
+| `POST /api/google/gmail/connect`, `GET /api/google/gmail/callback`, `POST /api/google/gmail/disconnect` | session (+ signed state) | Read-only Gmail OAuth |
 
 Every private response is `Cache-Control: private, no-store`. Client errors are generic. Server logs record operation names and status codes only; tokens, emails, message text, task titles and event text are not logged.
 
 ## Tests
 
-`npm test` runs the Vitest suite against an in-memory Postgres (PGlite) with mocked Notion, Google and OpenAI HTTP. Beyond the v0.2 coverage (auth gate, origin checks, Notion reads, calendar DST and OAuth, planner, AI fallback, idempotent scheduling), v0.3 adds:
+`npm test` runs the Vitest suite against an in-memory Postgres (PGlite) with mocked Notion, Google and OpenAI HTTP. Beyond the v0.2 coverage (auth gate, origin checks, Notion reads, calendar DST and OAuth, planner, AI fallback, idempotent scheduling), v0.3 and the morning Gmail agent add:
 
 - Intake end to end: one message producing several verified Notion records and a refreshed briefing; updating instead of duplicating; replayed idempotency keys; recovery of a create whose response was lost; hypotheticals and intentions not written; relative and DST-crossing dates; no invented deadlines; ambiguous matches; empty Notion; proposals then apply; revoked permission; permission, schema and rate-limit failures stopping later writes; undo, including refusal when a page was edited afterwards; AI output that is malformed or tries to claim actions.
 - Life Blueprint: only confirmed entries change ranking; paused projects rank lower; stale saves rejected.
 - Next action: setup time, and each feedback effect; Done writes to Notion only with permission.
 - Needs attention: each warning type, and nothing when Notion is unavailable.
 - External intake: disabled without a token; bad token, signature, timestamp and tampered body rejected; replay safe; same permission as chat; no credentials in responses.
+- Morning Gmail agent: promotions/social excluded; disconnected/revoked sources warn without inventing mail; duplicate jobs in the same local date collapse; schema-invalid model output dropped; send/modify scopes refused; digest merge does not wipe top outcomes.
 
 `npm run typecheck` and `npm run build` must also pass. There is no lint script or ESLint configuration in this project yet.
 

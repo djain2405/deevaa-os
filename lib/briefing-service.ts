@@ -96,14 +96,17 @@ export async function runBriefing(
       return {outcome: 'kept_previous', run, briefing: previous};
     }
 
+    const previousDigest = previous ? (previous.snapshot as BriefingSnapshot).emailDigest : undefined;
+    const toStore = previousDigest && !snapshot.emailDigest ? {...snapshot, emailDigest: previousDigest} : snapshot;
+
     const briefing = await upsertBriefing({
       userId: input.userId,
       localDate: input.date,
       version: BRIEFING_VERSION,
-      status: snapshot.status,
-      snapshot,
+      status: toStore.status,
+      snapshot: toStore,
       runId: claim.run.id,
-      generatedAt: new Date(snapshot.generatedAt)
+      generatedAt: new Date(toStore.generatedAt)
     });
     const run = await finishRun(claim.run.id, {status: 'succeeded', briefingId: briefing.id});
     await audit(input.userId, 'briefing.generate', 'ok', {trigger: input.trigger, date: input.date, status: snapshot.status, ai: snapshot.ai.status});

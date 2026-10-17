@@ -17,3 +17,8 @@ preDeployCommand = "npm run db:migrate"
 [[cron]]
 schedule = "0 5 * * *"
 command = "sh scripts/trigger-cron.sh"
+
+# Agent dispatcher (Gmail morning digest at 7:00 America/Los_Angeles, plus future agents).
+[[cron]]
+schedule = "*/15 * * * *"
+command = "sh scripts/trigger-jobs.sh"

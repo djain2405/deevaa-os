@@ -116,6 +116,29 @@ export type RankedTask = TaskRef & {
   aiNote?: string;
 };
 
+export type EmailAction = {
+  title: string;
+  due: string | null;
+  why: string;
+  permalink: string;
+  evidence: string;
+};
+
+export type EmailSummary = {
+  subject: string;
+  from: string;
+  why: string;
+  permalink: string;
+};
+
+export type EmailDigest = {
+  status: 'complete' | 'partial' | 'unavailable';
+  generatedAt: string;
+  actions: EmailAction[];
+  summaries: EmailSummary[];
+  warnings: string[];
+};
+
 export type BriefingSnapshot = {
   version: typeof BRIEFING_VERSION;
   date: string;
@@ -137,4 +160,6 @@ export type BriefingSnapshot = {
   waiting?: RankedTask[];
   /** Derived from this snapshot only — not a simulated agent run log. */
   agentWork?: AgentDeliverable[];
+  /** Morning Gmail digest. Absent on snapshots stored before it existed. */
+  emailDigest?: EmailDigest;
 };
