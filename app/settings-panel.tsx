@@ -1,6 +1,7 @@
 'use client';
 
 import {useCallback, useEffect, useState} from 'react';
+import {ConnectionsPanel} from './connections-panel';
 
 type Settings = {
   timezone: string;
@@ -59,21 +60,28 @@ export function SettingsPanel() {
     window.location.href = '/login';
   }
 
-  if (!settings) return <p className="muted">{error || 'Loading settings…'}</p>;
   return (
-    <section className="panel" aria-labelledby="settings-title">
-      <h2 id="settings-title">Settings and governance</h2>
-      {error && <p className="warning">{error}</p>}
-      {message && <p className="notice">{message}</p>}
-      <p className="muted">Timezone {settings.timezone}. Quiet hours {settings.quietStart}–{settings.quietEnd}. Gmail still runs at 7:00 only when agents are not paused.</p>
-      <div className="row-actions">
-        <button type="button" onClick={() => save({pauseAll: !settings.pauseAll})}>{settings.pauseAll ? 'Resume agents' : 'Pause all agents'}</button>
-        <button type="button" className="ghost" onClick={() => save({maintenanceMode: !settings.maintenanceMode})}>
-          {settings.maintenanceMode ? 'Leave maintenance' : 'Maintenance mode'}
-        </button>
-        <button type="button" className="ghost" onClick={exportData}>Export my data</button>
-        <button type="button" className="ghost" onClick={remove}>Delete Deevaa data</button>
-      </div>
-    </section>
+    <>
+      <ConnectionsPanel />
+      <section className="panel" aria-labelledby="settings-title">
+        <h2 id="settings-title">Settings and governance</h2>
+        {!settings && <p className="muted">{error || 'Loading settings…'}</p>}
+        {settings && (
+          <>
+            {error && <p className="warning">{error}</p>}
+            {message && <p className="notice">{message}</p>}
+            <p className="muted">Timezone {settings.timezone}. Quiet hours {settings.quietStart}–{settings.quietEnd}. Gmail still runs at 7:00 only when agents are not paused.</p>
+            <div className="row-actions">
+              <button type="button" onClick={() => save({pauseAll: !settings.pauseAll})}>{settings.pauseAll ? 'Resume agents' : 'Pause all agents'}</button>
+              <button type="button" className="ghost" onClick={() => save({maintenanceMode: !settings.maintenanceMode})}>
+                {settings.maintenanceMode ? 'Leave maintenance' : 'Maintenance mode'}
+              </button>
+              <button type="button" className="ghost" onClick={exportData}>Export my data</button>
+              <button type="button" className="ghost" onClick={remove}>Delete Deevaa data</button>
+            </div>
+          </>
+        )}
+      </section>
+    </>
   );
 }

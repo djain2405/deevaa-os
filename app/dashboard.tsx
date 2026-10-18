@@ -1,13 +1,9 @@
 'use client';
 
 import {useCallback, useEffect, useRef, useState} from 'react';
-import {BlueprintPanel} from './blueprint-panel';
-import {ChatPanel} from './chat-panel';
-import {OsNav} from './os-nav';
-import {SettingsPanel} from './settings-panel';
 import type {Connections} from '@/lib/briefing-view';
 import {ACTION_WINDOWS, CONTEXTS, ENERGY_LEVELS, findNextAction, type Feedback, type FeedbackKind, type NextAction} from '@/lib/next-action';
-import type {AgentDeliverable, Block, BriefingSnapshot, Context, DecisionLane, Energy, RadarItem, RankedTask, SourceHealth, TaskRef} from '@/lib/types';
+import type {Block, BriefingSnapshot, Context, DecisionLane, Energy, RadarItem, TaskRef} from '@/lib/types';
 
 type RunView = {id: string; trigger: string; status: string; errorCode: string | null; startedAt: string; finishedAt: string | null};
 type EmailItemState = {permalink: string; kind: 'hidden' | 'saved'; pageUrl: string | null};
@@ -30,39 +26,9 @@ const RADAR_LABEL: Record<RadarItem['kind'], string> = {
   verify_deadline: 'Verify deadline'
 };
 
-type TaskFilter = 'attention' | 'ready' | 'scheduled' | 'waiting_blocked' | 'someday' | 'completed';
-
-const TASK_FILTERS: {id: TaskFilter; label: string}[] = [
-  {id: 'attention', label: 'Needs attention'},
-  {id: 'ready', label: 'Ready'},
-  {id: 'scheduled', label: 'Scheduled'},
-  {id: 'waiting_blocked', label: 'Waiting / Blocked'},
-  {id: 'someday', label: 'Someday'},
-  {id: 'completed', label: 'Completed'}
-];
-
 function LaneBadge({lane}: {lane: DecisionLane}) {
   const urgent = lane === 'Critical' || lane === 'Due soon';
   return <span className={`badge lane-badge ${urgent ? 'lane-urgent' : lane === 'Important' ? 'lane-important' : ''}`}>{lane}</span>;
-}
-
-function taskMatchesFilter(t: RankedTask, filter: TaskFilter, attentionIds: Set<string>) {
-  switch (filter) {
-    case 'attention':
-      return attentionIds.has(t.id) || t.lane === 'Verify';
-    case 'ready':
-      return t.executable && (t.lane === 'Critical' || t.lane === 'Due soon' || t.lane === 'Important');
-    case 'scheduled':
-      return t.lane === 'Scheduled';
-    case 'waiting_blocked':
-      return t.lane === 'Waiting' || t.lane === 'Blocked';
-    case 'someday':
-      return t.lane === 'Someday';
-    case 'completed':
-      return t.lane === 'Completed';
-    default:
-      return true;
-  }
 }
 
 const FEEDBACK_BUTTONS: {kind: FeedbackKind; label: string}[] = [
@@ -132,11 +98,6 @@ const GMAIL_MESSAGES: Record<string, string> = {
 
 const TRIGGER_LABEL: Record<string, string> = {cron: 'scheduled run', manual: 'you', initial: 'first load', agent: 'email agent'};
 
-function StateBadge({state}: {state: 'connected' | 'not_connected' | 'error' | 'pending'}) {
-  const label = {connected: 'Connected', not_connected: 'Not connected', error: 'Error', pending: 'Configured, not read yet'}[state];
-  return <span className={`badge badge-${state}`}>{label}</span>;
-}
-
 function TaskLinks({task}: {task: TaskRef}) {
   return (
     <span className="links">
@@ -149,18 +110,6 @@ function TaskLinks({task}: {task: TaskRef}) {
         </a>
       )}
     </span>
-  );
-}
-
-function SourceRow({name, health, fallback, children}: {name: string; health?: SourceHealth; fallback: 'not_connected' | 'pending' | 'error'; children?: React.ReactNode}) {
-  return (
-    <li className="conn">
-      <div>
-        <strong>{name}</strong> <StateBadge state={health?.state ?? fallback} />
-        {health && <p className="muted">{health.message}{health.lastSyncedAt ? ` Last synced ${stamp(health.lastSyncedAt)}.` : ''}</p>}
-      </div>
-      {children}
-    </li>
   );
 }
 
@@ -200,7 +149,7 @@ function BlockRow({
   );
 }
 
-export default function Dashboard({email, signOutAction}: {email: string; signOutAction: () => Promise<void>}) {
+export default function Dashboard() {
   const [data, setData] = useState<Payload | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -215,7 +164,6 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
   const [skipped, setSkipped] = useState<string[]>([]);
   const [topSkipped, setTopSkipped] = useState<string[]>([]);
   const [whyOpen, setWhyOpen] = useState<string | null>(null);
-  const [taskFilter, setTaskFilter] = useState<TaskFilter>('ready');
   const [writes, setWrites] = useState<'granted' | 'off' | null>(null);
   const [completingId, setCompletingId] = useState<string | null>(null);
   const [completedIds, setCompletedIds] = useState<string[]>([]);
@@ -231,24 +179,6 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
     const body = await res.json();
     setWrites(body.permissions.notion_task_write.status === 'granted' ? 'granted' : 'off');
   }, []);
-
-  async function toggleWrites() {
-    const granting = writes !== 'granted';
-    if (
-      granting &&
-      !window.confirm(
-        'Let Deevaa create and update tasks in your Deevaa Tasks database from what you tell it in chat, and publish your Life Blueprint as a Notion page under the same parent?\n\nIt only changes task fields (title, status, due date, priority, duration, project, next action), verifies every write, and keeps an undo record. It never deletes tasks, sends messages, books anything or edits your calendar. You can turn this off at any time.'
-      )
-    )
-      return;
-    const res = await fetch('/api/permissions', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({permission: 'notion_task_write', status: granting ? 'granted' : 'revoked'})
-    });
-    setNotice(res.ok ? (granting ? 'Notion task updates are on.' : 'Notion task updates are off. Deevaa will only propose changes.') : 'Could not change Notion task updates.');
-    await loadWrites();
-  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -313,20 +243,6 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
       }
     });
   }, [load, loadWrites, regenerate]);
-
-  async function disconnect() {
-    if (!window.confirm('Disconnect Google Calendar? Deevaa will forget its read-only access.')) return;
-    const res = await fetch('/api/google/disconnect', {method: 'POST'});
-    setNotice(res.ok ? 'Google Calendar disconnected.' : 'Could not disconnect Google Calendar.');
-    await load();
-  }
-
-  async function disconnectGmail() {
-    if (!window.confirm('Disconnect Gmail? Deevaa will forget its read-only access and will not send or change any mail.')) return;
-    const res = await fetch('/api/google/gmail/disconnect', {method: 'POST'});
-    setNotice(res.ok ? 'Gmail disconnected.' : 'Could not disconnect Gmail.');
-    await load();
-  }
 
   async function actOnEmail(permalink: string, action: 'hide' | 'save') {
     setEmailActing(`${action}:${permalink}`);
@@ -431,19 +347,15 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
   const b = data?.briefing ?? null;
   const conn = data?.connections;
   const ready = b?.tasks.filter((t) => t.executable) ?? [];
-  const attentionIds = new Set((b?.radar ?? []).map((r) => r.task.id));
   const topVisible = (b?.topOutcomes ?? []).filter((o) => !topSkipped.includes(o.task.id) && !hiddenTaskIds.has(o.task.id));
-  const filteredTasks =
-    b?.tasks.filter((t) => {
-      if (hiddenTaskIds.has(t.id) && taskFilter !== 'completed') return false;
-      return taskMatchesFilter(t, taskFilter, attentionIds);
-    }) ?? [];
-  const calendarFallback = conn?.calendar.state === 'revoked' ? 'error' : conn?.calendar.state === 'connected' ? 'pending' : 'not_connected';
-  const gmailFallback = conn?.gmail.state === 'revoked' ? 'error' : conn?.gmail.state === 'connected' ? 'pending' : 'not_connected';
   const digest = b?.emailDigest;
   const emailState = new Map((data?.emailItems ?? []).map((i) => [i.permalink, i]));
   const visibleActions = (digest?.actions ?? []).filter((a) => emailState.get(a.permalink)?.kind !== 'hidden');
   const visibleSummaries = (digest?.summaries ?? []).filter((s) => emailState.get(s.permalink)?.kind !== 'hidden');
+  const needsSetup = conn && (conn.gmail.state !== 'connected' || conn.calendar.state !== 'connected');
+  const freeLabel = b?.capacity.known
+    ? `${b.capacity.freeMinutes! >= 60 ? `${Math.floor(b.capacity.freeMinutes! / 60)}h ` : ''}${b.capacity.freeMinutes! % 60}m open today`
+    : 'Free time unknown';
 
   function skipTop(taskId: string) {
     setTopSkipped((prev) => (prev.includes(taskId) ? prev : [...prev, taskId]));
@@ -451,507 +363,312 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
 
   return (
     <>
-      <a className="skip" href="#briefing">Skip to briefing</a>
-      <main>
-        <header>
-          <div className="brand">
-            ✦ <strong>Deevaa OS</strong>
-            <span>Chief of Staff</span>
+      <section className="hero" aria-labelledby="hero-title">
+        <div className="panel-head">
+          <div>
+            <p className="eyebrow">{data ? longDate(data.date) : 'Loading'}</p>
+            <h1 id="hero-title">
+              {b ? 'Today' : loading ? 'Loading today…' : busy ? 'Preparing today…' : 'No briefing yet'}
+            </h1>
           </div>
-          <div className="header-actions">
-            <span className="muted who">{email}</span>
-            <button type="button" onClick={() => regenerate(crypto.randomUUID())} disabled={busy || loading} aria-busy={busy}>
-              {busy ? 'Preparing…' : '↻ Regenerate'}
-            </button>
-            <form action={signOutAction}>
-              <button type="submit" className="ghost">Sign out</button>
-            </form>
-          </div>
-        </header>
-        <OsNav />
+          <button type="button" onClick={() => regenerate(crypto.randomUUID())} disabled={busy || loading} aria-busy={busy}>
+            {busy ? 'Preparing…' : '↻ Refresh'}
+          </button>
+        </div>
+        {b && <p className="summary">{b.summary}</p>}
+        {b && (
+          <p className="status">
+            <b className={`pill pill-${b.status}`}>{b.status === 'complete' ? 'Complete' : b.status === 'partial' ? 'Partial' : 'Unavailable'}</b>
+            {' · '}Updated {stamp(b.generatedAt)}
+            {data?.lastRun?.status === 'succeeded' && ` by ${TRIGGER_LABEL[data.lastRun.trigger] ?? 'a run'}`}
+            {b.capacity.known ? ` · ${freeLabel}` : ''}
+          </p>
+        )}
+      </section>
 
-        <section className="hero" aria-labelledby="hero-title">
-          <p className="eyebrow">{data ? longDate(data.date) : 'Loading'}</p>
-          <h1 id="hero-title">
-            {b ? (data?.date === data?.today ? 'Today’s briefing' : 'Briefing') : loading ? 'Loading your briefing…' : busy ? 'Preparing your first briefing…' : 'No briefing yet.'}
-          </h1>
-          {b && <p className="summary">{b.summary}</p>}
-          {b && (
-            <p className="status">
-              <b className={`pill pill-${b.status}`}>{b.status === 'complete' ? 'Complete' : b.status === 'partial' ? 'Partial' : 'Unavailable'}</b>
-              {' · '}Updated {stamp(b.generatedAt)}
-              {data?.lastRun?.status === 'succeeded' && ` by ${TRIGGER_LABEL[data.lastRun.trigger] ?? 'a run'}`}
-              {b.ai.status === 'applied' ? ' · AI explanations shown' : ''}
-            </p>
+      <div aria-live="polite" role="status">
+        {notice && <p className="notice">{notice}</p>}
+        {error && <p className="warning">{error}</p>}
+      </div>
+
+      {needsSetup && conn && (
+        <p className="notice">
+          {conn.gmail.state !== 'connected' && conn.calendar.state !== 'connected'
+            ? 'Connect Gmail and Calendar in Settings to fill this view.'
+            : conn.gmail.state !== 'connected'
+              ? 'Connect Gmail in Settings for the morning digest.'
+              : 'Connect Calendar in Settings to show free time.'}{' '}
+          <a href="/settings">Open Settings</a>
+        </p>
+      )}
+
+      {(data?.warnings.length || b?.warnings.length) ? (
+        <section className="warning" aria-label="Warnings">
+          <ul>
+            {[...(data?.warnings ?? []), ...(b?.warnings ?? [])].map((w, i) => (
+              <li key={i}>⚠ {w}</li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {data && (digest || conn?.gmail.state === 'connected' || visibleActions.length > 0) && (
+        <section className="panel" aria-labelledby="email-title">
+          <div className="panel-head">
+            <h2 id="email-title">This morning’s mail</h2>
+            <button type="button" className="small-btn" onClick={runGmailDigest} disabled={gmailBusy || busy || loading} aria-busy={gmailBusy}>
+              {gmailBusy ? 'Reading…' : 'Refresh mail'}
+            </button>
+          </div>
+          {conn?.gmail.state !== 'connected' && !digest && (
+            <p className="muted">Gmail is not connected. <a href="/settings">Connect it in Settings</a> — Deevaa never sends or marks mail read.</p>
+          )}
+          {digest?.status === 'unavailable' && <p className="muted">{digest.warnings[0] ?? 'Gmail could not be read. Nothing was invented.'}</p>}
+          {digest && digest.status !== 'unavailable' && (
+            <>
+              {visibleActions.length > 0 && (
+                <ul className="plain">
+                  {visibleActions.map((a) => {
+                    const saved = emailState.get(a.permalink);
+                    return (
+                      <li className="task" key={a.permalink + a.title}>
+                        <div>
+                          <span className="badge lane-badge lane-urgent">Time-sensitive</span>
+                          <strong>
+                            <a href={a.permalink} target="_blank" rel="noreferrer">
+                              {a.title}
+                            </a>
+                          </strong>
+                          <small>
+                            {a.due ? `Due ${a.due}. ` : ''}
+                            {a.why}
+                          </small>
+                          {saved?.kind === 'saved' && saved.pageUrl ? (
+                            <span className="links">
+                              <a href={saved.pageUrl} target="_blank" rel="noreferrer">Open in Notion</a>
+                            </span>
+                          ) : (
+                            <div className="feedback" role="group" aria-label={`Actions for ${a.title}`}>
+                              <button type="button" className="ghost" onClick={() => actOnEmail(a.permalink, 'hide')} disabled={!!emailActing}>
+                                Not important
+                              </button>
+                              <button type="button" onClick={() => actOnEmail(a.permalink, 'save')} disabled={!!emailActing || writes !== 'granted'} aria-busy={emailActing === `save:${a.permalink}`}>
+                                {emailActing === `save:${a.permalink}` ? 'Adding…' : 'Add to Notion'}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+              {visibleSummaries.length > 0 && (
+                <ul className="plain">
+                  {visibleSummaries.map((s) => {
+                    const saved = emailState.get(s.permalink);
+                    return (
+                      <li className="task" key={s.permalink + s.subject}>
+                        <div>
+                          <strong>
+                            <a href={s.permalink} target="_blank" rel="noreferrer">
+                              {s.subject}
+                            </a>
+                          </strong>
+                          <small>
+                            {s.from} — {s.why}
+                          </small>
+                          {saved?.kind === 'saved' && saved.pageUrl ? (
+                            <span className="links">
+                              <a href={saved.pageUrl} target="_blank" rel="noreferrer">Open in Notion</a>
+                            </span>
+                          ) : (
+                            <div className="feedback" role="group" aria-label={`Actions for ${s.subject}`}>
+                              <button type="button" className="ghost" onClick={() => actOnEmail(s.permalink, 'hide')} disabled={!!emailActing}>
+                                Not important
+                              </button>
+                              <button type="button" onClick={() => actOnEmail(s.permalink, 'save')} disabled={!!emailActing || writes !== 'granted'} aria-busy={emailActing === `save:${s.permalink}`}>
+                                {emailActing === `save:${s.permalink}` ? 'Adding…' : 'Add to Notion'}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+              {visibleActions.length === 0 && visibleSummaries.length === 0 && (
+                <p className="muted">Nothing time-sensitive in the last 24 hours of Primary.</p>
+              )}
+              {writes !== 'granted' && (visibleActions.length > 0 || visibleSummaries.length > 0) && (
+                <p className="muted small">Turn on Notion updates in <a href="/settings">Settings</a> to add an email as a task.</p>
+              )}
+            </>
+          )}
+          {!digest && conn?.gmail.state === 'connected' && (
+            <p className="muted">No digest yet. The 7:00 AM Pacific job will fill this, or refresh mail now.</p>
           )}
         </section>
+      )}
 
-        <div aria-live="polite" role="status">
-          {notice && <p className="notice">{notice}</p>}
-          {error && <p className="warning">{error}</p>}
-        </div>
-
-        {(data?.warnings.length || b?.warnings.length) ? (
-          <section className="warning" aria-label="Warnings">
-            <ul>
-              {[...(data?.warnings ?? []), ...(b?.warnings ?? [])].map((w, i) => (
-                <li key={i}>⚠ {w}</li>
-              ))}
-            </ul>
-          </section>
-        ) : null}
-
-        {data && (
-          <section className="panel" aria-labelledby="email-title">
-            <div className="panel-head">
-              <h2 id="email-title">Email (this morning)</h2>
-              <button type="button" className="small-btn" onClick={runGmailDigest} disabled={gmailBusy || busy || loading} aria-busy={gmailBusy}>
-                {gmailBusy ? 'Reading…' : 'Run Gmail digest'}
-              </button>
-            </div>
-            {conn?.gmail.state !== 'connected' && !digest && (
-              <p className="muted">Gmail is not connected. Connect it below (read-only) to fill this section. Deevaa never sends or marks mail read.</p>
-            )}
-            {digest?.status === 'unavailable' && <p className="muted">{digest.warnings[0] ?? 'Gmail could not be read. Nothing was invented.'}</p>}
-            {digest && digest.status !== 'unavailable' && (
-              <>
-                <p className="muted">
-                  Last 24 hours, scanned {stamp(digest.generatedAt)}. Receipts and shipping mail are skipped unless a remaining deadline is quoted. Not important hides an item. Add to Notion creates a Ready task (needs task updates on).
-                </p>
-                {visibleActions.length > 0 && (
-                  <>
-                    <h2 className="space" id="email-actions-title">Time-sensitive</h2>
-                    <ul className="plain">
-                      {visibleActions.map((a) => {
-                        const saved = emailState.get(a.permalink);
-                        return (
-                          <li className="task" key={a.permalink + a.title}>
-                            <div>
-                              <strong>
-                                <a href={a.permalink} target="_blank" rel="noreferrer">
-                                  {a.title}
-                                </a>
-                              </strong>
-                              <small>
-                                {a.due ? `Due ${a.due}. ` : ''}
-                                {a.why}
-                              </small>
-                              <small className="muted">“{a.evidence}”</small>
-                              {saved?.kind === 'saved' && saved.pageUrl ? (
-                                <span className="links">
-                                  <a href={saved.pageUrl} target="_blank" rel="noreferrer">
-                                    Open in Notion
-                                  </a>
-                                </span>
-                              ) : (
-                                <div className="feedback" role="group" aria-label={`Actions for ${a.title}`}>
-                                  <button type="button" className="ghost" onClick={() => actOnEmail(a.permalink, 'hide')} disabled={!!emailActing}>
-                                    Not important
-                                  </button>
-                                  <button type="button" onClick={() => actOnEmail(a.permalink, 'save')} disabled={!!emailActing || writes !== 'granted'} aria-busy={emailActing === `save:${a.permalink}`}>
-                                    {emailActing === `save:${a.permalink}` ? 'Adding…' : 'Add to Notion'}
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </>
-                )}
-                {visibleSummaries.length > 0 && (
-                  <>
-                    <h2 className="space" id="email-miss-title">Do not miss</h2>
-                    <ul className="plain">
-                      {visibleSummaries.map((s) => {
-                        const saved = emailState.get(s.permalink);
-                        return (
-                          <li className="task" key={s.permalink + s.subject}>
-                            <div>
-                              <strong>
-                                <a href={s.permalink} target="_blank" rel="noreferrer">
-                                  {s.subject}
-                                </a>
-                              </strong>
-                              <small>
-                                {s.from} — {s.why}
-                              </small>
-                              {saved?.kind === 'saved' && saved.pageUrl ? (
-                                <span className="links">
-                                  <a href={saved.pageUrl} target="_blank" rel="noreferrer">
-                                    Open in Notion
-                                  </a>
-                                </span>
-                              ) : (
-                                <div className="feedback" role="group" aria-label={`Actions for ${s.subject}`}>
-                                  <button type="button" className="ghost" onClick={() => actOnEmail(s.permalink, 'hide')} disabled={!!emailActing}>
-                                    Not important
-                                  </button>
-                                  <button type="button" onClick={() => actOnEmail(s.permalink, 'save')} disabled={!!emailActing || writes !== 'granted'} aria-busy={emailActing === `save:${s.permalink}`}>
-                                    {emailActing === `save:${s.permalink}` ? 'Adding…' : 'Add to Notion'}
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </>
-                )}
-                {visibleActions.length === 0 && visibleSummaries.length === 0 && (
-                  <p className="muted">No time-sensitive actions or easy-to-miss notes in the last 24 hours of Primary inbox.</p>
-                )}
-                {writes !== 'granted' && (visibleActions.length > 0 || visibleSummaries.length > 0) && (
-                  <p className="muted small">Turn on Notion task updates in Connections to add an email as a task.</p>
-                )}
-              </>
-            )}
-            {!digest && conn?.gmail.state === 'connected' && (
-              <p className="muted">No digest yet. The 7:00 AM Pacific job will fill this, or run it now.</p>
-            )}
-          </section>
-        )}
-
-        {b && (
-          <div id="briefing">
-            {(b.radar?.length ?? 0) > 0 && (
-              <section className="panel radar" aria-labelledby="radar-title">
-                <h2 id="radar-title">Needs attention</h2>
-                <p className="muted">Deadlines, blocked work, stale waiting, and uncertain due dates. Deevaa only warns; it does not contact anyone.</p>
-                <ul className="plain">
-                  {b.radar!
-                    .filter((r) => !hiddenTaskIds.has(r.task.id))
-                    .map((r) => (
-                      <li key={`${r.kind}-${r.task.id}`} className={celebrateId === r.task.id ? 'done-celebrate' : undefined}>
-                        <span className="badge">{RADAR_LABEL[r.kind]}</span> <strong>{r.task.title}</strong>
-                        {r.task.url && <a href={r.task.url} target="_blank" rel="noreferrer">Open in Notion</a>}
-                        <p className="muted">{r.detail}</p>
-                        <div className="feedback" role="group" aria-label={`Mark ${r.task.title} done`}>
-                          <DoneButton taskId={r.task.id} completingId={completingId} onDone={markTaskDone} />
-                          <DoneToast taskId={r.task.id} celebrateId={celebrateId} />
-                        </div>
-                      </li>
-                    ))}
-                </ul>
-              </section>
-            )}
-
-            {topVisible.length > 0 && (
-              <section className="panel" aria-labelledby="top-title">
-                <h2 id="top-title">Top 3 priorities</h2>
-                <p className="muted small">Done updates Notion immediately. Chat task updates still use the Connections toggle.</p>
-                <ol className="outcomes">
-                  {topVisible.map((o) => (
-                    <li key={o.task.id} className={celebrateId === o.task.id ? 'done-celebrate' : undefined}>
-                      <LaneBadge lane={o.lane} /> <strong>{o.task.title}</strong>
-                      {whyOpen === o.task.id && <p className="muted">{o.reasons.join(' · ') || 'Ready in Notion'}</p>}
-                      {whyOpen !== o.task.id && <p className="muted">Next: {o.nextAction}</p>}
-                      {o.aiNote && <p className="ai-note"><span>AI note:</span> {o.aiNote}</p>}
-                      <TaskLinks task={o.task} />
-                      <div className="feedback" role="group" aria-label={`Feedback for ${o.task.title}`}>
-                        <button type="button" className="ghost" onClick={() => setWhyOpen(whyOpen === o.task.id ? null : o.task.id)} aria-expanded={whyOpen === o.task.id}>
-                          Why this?
-                        </button>
-                        <button type="button" className="ghost" onClick={() => sendFeedback(o.task.id, 'not_now')} disabled={!!completingId}>
-                          Not now
-                        </button>
-                        <button type="button" className="ghost" onClick={() => sendFeedback(o.task.id, 'wrong')} disabled={!!completingId}>
-                          Wrong priority
-                        </button>
-                        <DoneButton taskId={o.task.id} completingId={completingId} onDone={markTaskDone} />
-                        <button type="button" className="ghost" onClick={() => skipTop(o.task.id)} disabled={!!completingId}>
-                          Choose another
-                        </button>
-                        <DoneToast taskId={o.task.id} celebrateId={celebrateId} />
+      {b && (
+        <div id="briefing">
+          {(b.radar?.length ?? 0) > 0 && (
+            <section className="panel radar" aria-labelledby="radar-title">
+              <h2 id="radar-title">Needs attention</h2>
+              <ul className="plain">
+                {b.radar!
+                  .filter((r) => !hiddenTaskIds.has(r.task.id))
+                  .map((r) => (
+                    <li key={`${r.kind}-${r.task.id}`} className={celebrateId === r.task.id ? 'done-celebrate' : undefined}>
+                      <span className="badge">{RADAR_LABEL[r.kind]}</span> <strong>{r.task.title}</strong>
+                      {r.task.url && <a href={r.task.url} target="_blank" rel="noreferrer">Open in Notion</a>}
+                      <p className="muted">{r.detail}</p>
+                      <div className="feedback" role="group" aria-label={`Mark ${r.task.title} done`}>
+                        <DoneButton taskId={r.task.id} completingId={completingId} onDone={markTaskDone} />
+                        <DoneToast taskId={r.task.id} celebrateId={celebrateId} />
                       </div>
                     </li>
                   ))}
-                </ol>
-              </section>
-            )}
+              </ul>
+            </section>
+          )}
 
-            <div className="columns">
-              <section className="panel" aria-labelledby="blocks-title">
-                <h2 id="blocks-title">Today’s blocks</h2>
-                <p className="muted">Suggestions only. Deevaa does not create or change calendar events.</p>
-                <ul className="plain">
-                  {b.blocks.map((x) => (
-                    <BlockRow
-                      key={x.label}
-                      block={x}
-                      completingId={completingId}
-                      celebrateId={celebrateId}
-                      hiddenTaskIds={hiddenTaskIds}
-                      onDone={markTaskDone}
-                    />
-                  ))}
-                </ul>
-              </section>
-
-              <section className="panel" aria-labelledby="calendar-title">
-                <h2 id="calendar-title">Calendar</h2>
-                {b.capacity.known ? (
-                  <p className="muted">
-                    {`${b.capacity.freeMinutes! >= 60 ? `${Math.floor(b.capacity.freeMinutes! / 60)}h ` : ''}${b.capacity.freeMinutes! % 60}m`} open between 7:00 AM and 10:30 PM, after 10-minute preparation and transition buffers.
-                  </p>
-                ) : (
-                  <p className="muted">Calendar not available, so free time is unknown and no windows are claimed.</p>
-                )}
-                {b.events.length ? (
-                  <ul className="plain">
-                    {[...b.events].sort((x, y) => Number(y.allDay) - Number(x.allDay)).map((e) => (
-                      <li className="event" key={`${e.calendarId}-${e.id}`}>
-                        <span>{e.allDay ? 'All day' : `${time(e.start)} – ${time(e.end)}`}</span>
-                        <strong>
-                          {e.htmlLink ? <a href={e.htmlLink} target="_blank" rel="noreferrer">{e.title}</a> : e.title}
-                          {!e.busy && !e.allDay && <small> (free)</small>}
-                        </strong>
-                      </li>
-                    ))}
-                  </ul>
-                ) : b.capacity.known ? (
-                  <p className="muted">No events on this day.</p>
-                ) : null}
-
-                <h2 className="space" id="next-title">Find my next action</h2>
-                <fieldset className="windows">
-                  <legend className="small muted">Time available</legend>
-                  {ACTION_WINDOWS.map((m) => (
-                    <button key={m} type="button" className={minutes === m ? 'chip on' : 'chip'} aria-pressed={minutes === m} onClick={() => setMinutes(m)}>
-                      {m} min
-                    </button>
-                  ))}
-                </fieldset>
-                <div className="fields">
-                  <label>
-                    Energy
-                    <select value={energy} onChange={(e) => setEnergy(e.target.value as Energy)}>
-                      {ENERGY_LEVELS.map((x) => <option key={x}>{x}</option>)}
-                    </select>
-                  </label>
-                  <label>
-                    Where you are
-                    <select value={context} onChange={(e) => setContext(e.target.value as Context)}>
-                      {CONTEXTS.map((x) => <option key={x}>{x}</option>)}
-                    </select>
-                  </label>
-                </div>
-                <button type="button" className="cta" onClick={() => choose()} disabled={!ready.length && !b.tasks.length}>
-                  Choose one action →
-                </button>
-                <div aria-live="polite">
-                  {action?.kind === 'task' && !hiddenTaskIds.has(action.task.id) && (
-                    <div className="selected">
-                      <b>{action.task.title}</b>
-                      <p>{action.reason}</p>
-                      <p>{action.doneDefinition}</p>
-                      <TaskLinks task={action.task} />
-                      <div className="feedback" role="group" aria-label="How did this recommendation work?">
-                        {FEEDBACK_BUTTONS.map((f) =>
-                          f.kind === 'done' ? (
-                            <DoneButton key={f.kind} taskId={action.task.id} completingId={completingId} onDone={markTaskDone} />
-                          ) : (
-                            <button key={f.kind} type="button" className="ghost" onClick={() => sendFeedback(action.task.id, f.kind)} disabled={!!completingId}>
-                              {f.label}
-                            </button>
-                          )
-                        )}
-                        <DoneToast taskId={action.task.id} celebrateId={celebrateId} />
-                        <button type="button" className="ghost" onClick={() => choose([...skipped, action.task.id])}>
-                          Something else
-                        </button>
-                      </div>
+          {topVisible.length > 0 && (
+            <section className="panel" aria-labelledby="top-title">
+              <div className="panel-head">
+                <h2 id="top-title">Top 3</h2>
+                <a className="muted small" href="/projects">All tasks</a>
+              </div>
+              <ol className="outcomes">
+                {topVisible.map((o) => (
+                  <li key={o.task.id} className={celebrateId === o.task.id ? 'done-celebrate' : undefined}>
+                    <LaneBadge lane={o.lane} /> <strong>{o.task.title}</strong>
+                    {whyOpen === o.task.id && <p className="muted">{o.reasons.join(' · ') || 'Ready in Notion'}</p>}
+                    {whyOpen !== o.task.id && <p className="muted">Next: {o.nextAction}</p>}
+                    <TaskLinks task={o.task} />
+                    <div className="feedback" role="group" aria-label={`Feedback for ${o.task.title}`}>
+                      <button type="button" className="ghost" onClick={() => setWhyOpen(whyOpen === o.task.id ? null : o.task.id)} aria-expanded={whyOpen === o.task.id}>
+                        Why this?
+                      </button>
+                      <button type="button" className="ghost" onClick={() => sendFeedback(o.task.id, 'not_now')} disabled={!!completingId}>
+                        Not now
+                      </button>
+                      <DoneButton taskId={o.task.id} completingId={completingId} onDone={markTaskDone} />
+                      <button type="button" className="ghost" onClick={() => skipTop(o.task.id)} disabled={!!completingId}>
+                        Choose another
+                      </button>
+                      <DoneToast taskId={o.task.id} celebrateId={celebrateId} />
                     </div>
-                  )}
-                  {action?.kind === 'rest' && (
-                    <div className="selected">
-                      <b>Rest or transition</b>
-                      <p>{action.reason}</p>
-                    </div>
-                  )}
-                </div>
-              </section>
-            </div>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          )}
 
-            {(b.waiting?.length ?? 0) > 0 && (
-              <section className="panel" aria-labelledby="waiting-title">
-                <h2 id="waiting-title">Waiting</h2>
-                <p className="muted">No action from you until they reply.</p>
-                <ul className="plain">
-                  {b.waiting!
-                    .filter((t) => !hiddenTaskIds.has(t.id))
-                    .map((t) => (
-                      <li key={t.id} className={`task${celebrateId === t.id ? ' done-celebrate' : ''}`}>
-                        <div>
-                          <LaneBadge lane={t.lane} /> <strong>{t.title}</strong>
-                          <small>{t.excludedReason ?? t.status}</small>
-                          <div className="feedback" role="group" aria-label={`Mark ${t.title} done`}>
-                            <DoneButton taskId={t.id} completingId={completingId} onDone={markTaskDone} />
-                            <DoneToast taskId={t.id} celebrateId={celebrateId} />
-                          </div>
-                        </div>
-                        <TaskLinks task={t} />
-                      </li>
-                    ))}
-                </ul>
-              </section>
-            )}
+          <div className="columns">
+            <section className="panel" aria-labelledby="blocks-title">
+              <h2 id="blocks-title">Today’s blocks</h2>
+              <ul className="plain">
+                {b.blocks.map((x) => (
+                  <BlockRow
+                    key={x.label}
+                    block={x}
+                    completingId={completingId}
+                    celebrateId={celebrateId}
+                    hiddenTaskIds={hiddenTaskIds}
+                    onDone={markTaskDone}
+                  />
+                ))}
+              </ul>
+            </section>
 
-            {(b.agentWork?.length ?? 0) > 0 && (
-              <section className="panel" aria-labelledby="agents-title">
-                <h2 id="agents-title">Agents prepared</h2>
-                <p className="muted">Derived from this briefing only — not a simulated run log.</p>
-                <ul className="plain">
-                  {b.agentWork!.map((a: AgentDeliverable) => (
-                    <li key={a.agent} className="task">
-                      <div>
-                        <strong>{a.agent}</strong> <span className="badge badge-connected">{a.status}</span>
-                        <small>{a.summary}</small>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            )}
-
-            <details className="panel">
-              <summary>
-                <h2 className="inline-title">All tasks ({b.tasks.length})</h2>
-              </summary>
+            <section className="panel" aria-labelledby="next-title">
+              <div className="panel-head">
+                <h2 id="next-title">Next action</h2>
+                <a className="muted small" href="/calendar">Calendar</a>
+              </div>
+              <p className="muted">{b.capacity.known ? `${freeLabel} between 7:00 AM and 10:30 PM.` : 'Calendar not available, so free time is unknown.'}</p>
               <fieldset className="windows">
-                <legend className="small muted">Filter</legend>
-                {TASK_FILTERS.map((f) => (
-                  <button key={f.id} type="button" className={taskFilter === f.id ? 'chip on' : 'chip'} aria-pressed={taskFilter === f.id} onClick={() => setTaskFilter(f.id)}>
-                    {f.label}
+                <legend className="small muted">Time available</legend>
+                {ACTION_WINDOWS.map((m) => (
+                  <button key={m} type="button" className={minutes === m ? 'chip on' : 'chip'} aria-pressed={minutes === m} onClick={() => setMinutes(m)}>
+                    {m} min
                   </button>
                 ))}
               </fieldset>
-              {filteredTasks.length ? (
-                <ul className="plain">
-                  {filteredTasks.map((t) => (
+              <div className="fields">
+                <label>
+                  Energy
+                  <select value={energy} onChange={(e) => setEnergy(e.target.value as Energy)}>
+                    {ENERGY_LEVELS.map((x) => <option key={x}>{x}</option>)}
+                  </select>
+                </label>
+                <label>
+                  Where you are
+                  <select value={context} onChange={(e) => setContext(e.target.value as Context)}>
+                    {CONTEXTS.map((x) => <option key={x}>{x}</option>)}
+                  </select>
+                </label>
+              </div>
+              <button type="button" className="cta" onClick={() => choose()} disabled={!ready.length && !b.tasks.length}>
+                Choose one action →
+              </button>
+              <div aria-live="polite">
+                {action?.kind === 'task' && !hiddenTaskIds.has(action.task.id) && (
+                  <div className="selected">
+                    <b>{action.task.title}</b>
+                    <p>{action.reason}</p>
+                    <p>{action.doneDefinition}</p>
+                    <TaskLinks task={action.task} />
+                    <div className="feedback" role="group" aria-label="How did this recommendation work?">
+                      {FEEDBACK_BUTTONS.map((f) =>
+                        f.kind === 'done' ? (
+                          <DoneButton key={f.kind} taskId={action.task.id} completingId={completingId} onDone={markTaskDone} />
+                        ) : (
+                          <button key={f.kind} type="button" className="ghost" onClick={() => sendFeedback(action.task.id, f.kind)} disabled={!!completingId}>
+                            {f.label}
+                          </button>
+                        )
+                      )}
+                      <DoneToast taskId={action.task.id} celebrateId={celebrateId} />
+                      <button type="button" className="ghost" onClick={() => choose([...skipped, action.task.id])}>
+                        Something else
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {action?.kind === 'rest' && (
+                  <div className="selected">
+                    <b>Rest or transition</b>
+                    <p>{action.reason}</p>
+                  </div>
+                )}
+              </div>
+            </section>
+          </div>
+
+          {(b.waiting?.length ?? 0) > 0 && (
+            <section className="panel" aria-labelledby="waiting-title">
+              <h2 id="waiting-title">Waiting</h2>
+              <ul className="plain">
+                {b.waiting!
+                  .filter((t) => !hiddenTaskIds.has(t.id))
+                  .map((t) => (
                     <li key={t.id} className={`task${celebrateId === t.id ? ' done-celebrate' : ''}`}>
                       <div>
                         <LaneBadge lane={t.lane} /> <strong>{t.title}</strong>
-                        <small>
-                          {t.status} · {t.priority === 'None' ? 'No priority' : t.priority} · {t.duration ? `${t.duration}m` : 'no duration'}
-                          {t.due ? ` · due ${t.due.slice(0, 10)}` : ''}
-                        </small>
-                        {t.excludedReason && <small>{t.excludedReason}</small>}
-                        {!t.excludedReason && t.reasons.length > 0 && <small>Why: {t.reasons.join(' · ')}</small>}
-                        {t.lane !== 'Completed' && t.status !== 'Done' && (
-                          <div className="feedback" role="group" aria-label={`Mark ${t.title} done`}>
-                            <DoneButton taskId={t.id} completingId={completingId} onDone={markTaskDone} />
-                            <DoneToast taskId={t.id} celebrateId={celebrateId} />
-                          </div>
-                        )}
+                        <small>{t.excludedReason ?? t.status}</small>
                       </div>
                       <TaskLinks task={t} />
                     </li>
                   ))}
-                </ul>
-              ) : (
-                <p className="muted">No tasks match this filter.</p>
-              )}
-            </details>
-          </div>
-        )}
-
-        <details className="panel">
-          <summary>Chat & task intake</summary>
-          <ChatPanel writes={writes} onChanged={load} />
-        </details>
-
-        <details className="panel" open={conn?.calendar.state !== 'connected' || conn?.gmail.state !== 'connected' || conn?.store !== 'postgres'}>
-          <summary>Connections & scheduling</summary>
-          <section aria-labelledby="sources-title">
-            <h2 id="sources-title" className="visually-hidden">Connections</h2>
-            <ul className="conns">
-              <SourceRow name="Notion tasks" health={b?.sources.notion} fallback={conn?.notion === 'configured' ? 'pending' : 'not_connected'}>
-                {conn?.notion === 'not_configured' && !b && <p className="muted small">Set NOTION_TOKEN and NOTION_DATA_SOURCE_ID on the server.</p>}
-                {conn?.notion === 'configured' && writes && (
-                  <div className="row-actions">
-                    <span className="muted small">Notion task updates and Life Blueprint publish: {writes === 'granted' ? 'On' : 'Off'}</span>
-                    <button type="button" className={writes === 'granted' ? 'ghost' : ''} onClick={toggleWrites} aria-pressed={writes === 'granted'}>
-                      {writes === 'granted' ? 'Turn off' : 'Turn on'}
-                    </button>
-                  </div>
-                )}
-              </SourceRow>
-              <SourceRow name="Google Calendar (read-only)" health={b && conn?.calendar.state !== 'not_connected' ? b.sources.calendar : undefined} fallback={calendarFallback}>
-                {conn?.calendar.state === 'connected' ? (
-                  <div className="row-actions">
-                    <span className="muted small">{conn.calendar.calendarCount} calendar(s)</span>
-                    <button type="button" className="ghost" onClick={disconnect}>Disconnect</button>
-                  </div>
-                ) : (
-                  <form method="post" action="/api/google/connect">
-                    <p className="muted small">Connect once on this site. Calendar access from your laptop does not carry over.</p>
-                    <button type="submit">{conn?.calendar.state === 'revoked' ? 'Reconnect' : 'Connect'} Google Calendar</button>
-                  </form>
-                )}
-              </SourceRow>
-              <SourceRow name="Gmail (read-only)" fallback={gmailFallback}>
-                {conn?.gmail.state === 'connected' ? (
-                  <div className="row-actions">
-                    <span className="muted small">Inbox scanned for the morning digest only</span>
-                    <button type="button" className="ghost" onClick={disconnectGmail}>Disconnect</button>
-                  </div>
-                ) : (
-                  <form method="post" action="/api/google/gmail/connect">
-                    <p className="muted small">Read-only. Deevaa never sends, labels, or marks mail read.</p>
-                    <button type="submit">{conn?.gmail.state === 'revoked' ? 'Reconnect' : 'Connect'} Gmail (read-only)</button>
-                  </form>
-                )}
-              </SourceRow>
-              <li className="conn">
-                <div>
-                  <strong>AI explanations</strong> <span className={`badge badge-${conn?.ai === 'enabled' ? 'connected' : 'not_connected'}`}>{conn?.ai === 'enabled' ? 'On' : 'Off'}</span>
-                  <p className="muted">{b?.ai.detail ?? (conn?.ai === 'enabled' ? 'Optional wording on top of the deterministic plan.' : 'Plans are deterministic; set OPENAI_API_KEY for optional explanations.')}</p>
-                </div>
-              </li>
-              <li className="conn">
-                <div>
-                  <strong>Database</strong>{' '}
-                  <span className={`badge badge-${conn?.store === 'postgres' ? 'connected' : 'pending'}`}>
-                    {conn?.store === 'postgres' ? 'Connected' : 'Not connected'}
-                  </span>
-                  <p className="muted">
-                    {conn?.store === 'postgres'
-                      ? 'This site is using Railway Postgres, so sign-in, briefings, and Blueprint stay after redeploys.'
-                      : 'This site is not using Railway Postgres yet. In Railway, open the web service → Variables and add DATABASE_URL as a reference to your Postgres plugin, then redeploy.'}
-                  </p>
-                </div>
-              </li>
-              <li className="conn">
-                <div>
-                  <strong>Scheduled briefing</strong>{' '}
-                  <span className={`badge badge-${conn?.scheduler.lastStatus === 'succeeded' ? 'connected' : conn?.scheduler.lastStatus === 'failed' ? 'error' : 'not_connected'}`}>
-                    {conn?.scheduler.lastRunAt ? (conn.scheduler.lastStatus === 'succeeded' ? 'Last run succeeded' : `Last run ${conn.scheduler.lastStatus}`) : 'No run recorded'}
-                  </span>
-                  <p className="muted">
-                    {conn?.scheduler.lastRunAt
-                      ? `A scheduler called Deevaa at ${stamp(conn.scheduler.lastRunAt)}.`
-                      : 'Nothing has triggered a nightly briefing yet. Scheduling is only active once the app is deployed and a cron call has succeeded.'}
-                  </p>
-                </div>
-              </li>
-            </ul>
-          </section>
-        </details>
-
-        <details className="panel blueprint" open>
-          <summary>Life Blueprint (ranking source — optional Notion copy)</summary>
-          <BlueprintPanel onSaved={() => regenerate(crypto.randomUUID())} />
-        </details>
-
-        <SettingsPanel />
-
-        <footer>
-          Deevaa reads Google Calendar without changing it. It changes Notion tasks only when task updates are on, and only from what you tell it. It never sends messages, books, publishes or deletes, and it records a task as done only when you say so. Recommendations are suggestions for you to act on.
-        </footer>
-      </main>
+              </ul>
+            </section>
+          )}
+        </div>
+      )}
     </>
   );
 }

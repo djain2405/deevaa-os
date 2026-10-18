@@ -1,7 +1,7 @@
-import {TodayView} from '@/app/surfaces';
+import {redirect} from 'next/navigation';
 
 export const dynamic = 'force-dynamic';
 
 export default function Page() {
-  return <TodayView />;
+  redirect('/');
 }
