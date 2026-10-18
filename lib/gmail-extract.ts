@@ -4,7 +4,8 @@ import {gmailPermalink, isSkippedCategory, type GmailMessage} from './google-gma
 import {logEvent} from './log';
 import {providerFetch, type FetchOptions} from './provider-fetch';
 import {daysUntil} from './time';
-import {TIMEZONE, type EmailAction, type EmailDigest, type EmailSummary} from './types';
+import {untrustedText} from './runtime/policy';
+import {TIMEZONE, type EmailAction, type EmailBucket, type EmailDigest, type EmailSummary} from './types';
 import {DateTime} from 'luxon';
 
 /** Remaining-work language — not completed payments or order dates. */
@@ -44,7 +45,24 @@ const ModelDigest = z.object({
 });
 
 export function messageText(m: GmailMessage) {
-  return `${m.subject}\n${m.from}\n${m.snippet}\n${m.excerpt}`;
+  return untrustedText(`${m.subject}\n${m.from}\n${m.snippet}\n${m.excerpt}`).text;
+}
+
+export function emailBucket(text: string, kind: 'action' | 'summary'): EmailBucket {
+  if (DEADLINE_RE.test(text)) return 'deadline';
+  if (/\b(please reply|awaiting your|action required|can you|could you)\b/i.test(text)) return 'needs_response';
+  if (/\b(waiting on|waiting for|i(?:'|’)ll get back|we(?:'|’)ll follow up)\b/i.test(text)) return 'waiting';
+  if (kind === 'summary') return 'informational';
+  return 'important';
+}
+
+export function bucketCounts(actions: EmailAction[], summaries: EmailSummary[]) {
+  const counts = new Map<EmailBucket, number>();
+  for (const item of [...actions, ...summaries]) {
+    if (!item.bucket) continue;
+    counts.set(item.bucket, (counts.get(item.bucket) ?? 0) + 1);
+  }
+  return [...counts.entries()].map(([bucket, count]) => ({bucket, count}));
 }
 
 function displayFrom(from: string) {
@@ -119,7 +137,8 @@ export function extractWithRules(messages: GmailMessage[], now: Date): {actions:
         due: classified.due,
         why: classified.due ? `Remaining deadline ${classified.due} quoted from this message.` : 'Time-sensitive language in this message.',
         permalink,
-        evidence: quoteAround(text, DEADLINE_RE.test(text) ? DEADLINE_RE : TRAVEL_RE)
+        evidence: quoteAround(text, DEADLINE_RE.test(text) ? DEADLINE_RE : TRAVEL_RE),
+        bucket: emailBucket(text, 'action')
       });
       continue;
     }
@@ -128,7 +147,8 @@ export function extractWithRules(messages: GmailMessage[], now: Date): {actions:
         subject: title,
         from: displayFrom(m.from),
         why: TRAVEL_RE.test(text) ? 'Travel or itinerary — easy to miss.' : 'Flagged as easy to miss (verification, offer, or similar).',
-        permalink
+        permalink,
+        bucket: emailBucket(text, 'summary')
       });
     }
   }
@@ -179,7 +199,8 @@ export function groundModelOutput(
         subject: (m.subject || 'Message').slice(0, 120),
         from: displayFrom(m.from),
         why: item.why.slice(0, 300) || 'Important message quoted from the inbox.',
-        permalink: gmailPermalink(m.threadId)
+        permalink: gmailPermalink(m.threadId),
+        bucket: emailBucket(text, 'summary')
       });
       continue;
     }
@@ -188,7 +209,8 @@ export function groundModelOutput(
       due,
       why: item.why.slice(0, 300) || 'Time-sensitive item quoted from this message.',
       permalink: gmailPermalink(m.threadId),
-      evidence
+      evidence,
+      bucket: emailBucket(text, 'action')
     });
   }
   for (const item of parsed.data.summaries) {
@@ -211,7 +233,8 @@ export function groundModelOutput(
       subject: (m.subject || 'Message').slice(0, 120),
       from: displayFrom(m.from),
       why: item.why.slice(0, 300) || 'Important message quoted from the inbox.',
-      permalink: gmailPermalink(m.threadId)
+      permalink: gmailPermalink(m.threadId),
+      bucket: emailBucket(text, 'summary')
     });
   }
   return {actions, summaries, dropped};

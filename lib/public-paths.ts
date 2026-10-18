@@ -2,6 +2,7 @@
 export function isPublicPath(pathname: string) {
   return (
     pathname === '/login' ||
+    pathname === '/api/health' ||
     pathname.startsWith('/api/auth/') ||
     pathname === '/api/cron' ||
     pathname === '/api/jobs' ||

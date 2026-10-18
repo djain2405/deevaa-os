@@ -3,7 +3,7 @@ import {getDb} from './db/client';
 import {emailItems} from './db/schema';
 import {hasPermission, NOTION_WRITE} from './intake-store';
 import {logEvent} from './log';
-import {createTask, findByExternalKey, loadWriteTarget, NotionWriteError} from './notion-write';
+import {createTask, findByExternalKey, loadWriteTarget} from './notion-write';
 import {audit, getBriefing} from './store';
 import {localDate} from './time';
 import {BRIEFING_VERSION, type BriefingSnapshot, type EmailAction, type EmailSummary} from './types';

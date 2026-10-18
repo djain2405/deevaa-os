@@ -32,9 +32,12 @@ afterEach(() => vi.unstubAllEnvs());
 describe('Life Blueprint import extraction', () => {
   it('fills all 13 Blueprint fields from the sample document', () => {
     const p = extractImportPreview(FIXTURE);
-    for (const f of BLUEPRINT_FIELDS) {
+    const imported = BLUEPRINT_FIELDS.filter((f) => !['values', 'identity', 'nonNegotiables'].includes(f.key));
+    expect(imported).toHaveLength(13);
+    for (const f of imported) {
       expect(p.blueprint[f.key].length, f.key).toBeGreaterThan(0);
     }
+    expect(p.blueprint.values).toEqual([]);
     expect(p.counts.blueprintFields).toBe(13);
   });
 

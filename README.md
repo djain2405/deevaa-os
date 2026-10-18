@@ -209,6 +209,10 @@ Every private response is `Cache-Control: private, no-store`. Client errors are 
 
 `npm run typecheck` and `npm run build` must also pass. There is no lint script or ESLint configuration in this project yet.
 
+## Implementation tracker
+
+Blueprint progress, acceptance evidence, and live-account blockers are in [docs/implementation-tracker.md](docs/implementation-tracker.md). The architecture snapshot is [docs/current-state.md](docs/current-state.md).
+
 ## Status
 
 **Implemented and tested with mocked providers:** everything above.

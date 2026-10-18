@@ -3,6 +3,8 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {BlueprintPanel} from './blueprint-panel';
 import {ChatPanel} from './chat-panel';
+import {OsNav} from './os-nav';
+import {SettingsPanel} from './settings-panel';
 import type {Connections} from '@/lib/briefing-view';
 import {ACTION_WINDOWS, CONTEXTS, ENERGY_LEVELS, findNextAction, type Feedback, type FeedbackKind, type NextAction} from '@/lib/next-action';
 import type {AgentDeliverable, Block, BriefingSnapshot, Context, DecisionLane, Energy, RadarItem, RankedTask, SourceHealth, TaskRef} from '@/lib/types';
@@ -466,6 +468,7 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
             </form>
           </div>
         </header>
+        <OsNav />
 
         <section className="hero" aria-labelledby="hero-title">
           <p className="eyebrow">{data ? longDate(data.date) : 'Loading'}</p>
@@ -942,6 +945,8 @@ export default function Dashboard({email, signOutAction}: {email: string; signOu
           <summary>Life Blueprint (ranking source — optional Notion copy)</summary>
           <BlueprintPanel onSaved={() => regenerate(crypto.randomUUID())} />
         </details>
+
+        <SettingsPanel />
 
         <footer>
           Deevaa reads Google Calendar without changing it. It changes Notion tasks only when task updates are on, and only from what you tell it. It never sends messages, books, publishes or deletes, and it records a task as done only when you say so. Recommendations are suggestions for you to act on.

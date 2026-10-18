@@ -1,4 +1,6 @@
 import {logEvent} from '../log';
+import {enqueueAgentRun, finishAgentRun} from '../runtime/store';
+import {getSettings} from '../settings';
 import {acquireLock, audit, claimRun, finishRun, getOrCreateUser, releaseLock, type RunRow} from '../store';
 import {agentLocalDate, isAgentDue, listAgents, type AgentDef} from './registry';
 
@@ -23,7 +25,8 @@ export async function runAgent(
   localDate: string,
   trigger: RunRow['trigger'],
   idempotencyKey: string,
-  now = new Date()
+  now = new Date(),
+  dryRun = false
 ): Promise<JobResult> {
   const claim = await claimRun({userId, localDate, trigger, idempotencyKey});
   if (claim.outcome === 'duplicate') {
@@ -39,7 +42,17 @@ export async function runAgent(
   }
 
   try {
-    const result = await agent.handler({userId, localDate, runId: claim.run.id, now});
+    const result = await agent.handler({userId, localDate, runId: claim.run.id, now, dryRun});
+    const mirrored = await enqueueAgentRun({
+      userId,
+      agentId: agent.id,
+      goal: agent.title,
+      trigger,
+      idempotencyKey: `runtime:${idempotencyKey}`
+    });
+    if (mirrored.outcome === 'queued' && mirrored.run) {
+      await finishAgentRun(mirrored.run.id, {status: 'completed', verifier: {legacyRunId: claim.run.id, dryRun}});
+    }
     const run = await finishRun(claim.run.id, {status: 'succeeded', briefingId: result.briefingId});
     await audit(userId, 'agent.run', 'ok', {agentId: agent.id, date: localDate});
     logEvent('info', 'agent.run', {agentId: agent.id, outcome: 'created'});
@@ -54,19 +67,25 @@ export async function runAgent(
   }
 }
 
-export async function dispatchDueAgents(now = new Date(), opts: {force?: boolean; agentId?: string} = {}): Promise<JobResult[]> {
+export async function dispatchDueAgents(now = new Date(), opts: {force?: boolean; agentId?: string; dryRun?: boolean} = {}): Promise<JobResult[]> {
   const email = process.env.ALLOWED_EMAIL;
   if (!email) throw new Error('not_configured');
   const user = await getOrCreateUser(email);
+  const settings = await getSettings(user.id);
   const out: JobResult[] = [];
   for (const agent of listAgents()) {
     if (opts.agentId && agent.id !== opts.agentId) continue;
     const date = agentLocalDate(agent, now);
+    if (settings.pauseAll || settings.maintenanceMode) {
+      out.push({agentId: agent.id, outcome: 'skipped', date, run: null});
+      continue;
+    }
     if (!opts.force && !isAgentDue(agent, now)) {
       out.push({agentId: agent.id, outcome: 'skipped', date, run: null});
       continue;
     }
-    out.push(await runAgent(agent, user.id, date, 'agent', agentIdempotencyKey(agent.id, user.id, date), now));
+    const key = agentIdempotencyKey(agent.id, user.id, date) + (opts.dryRun ? ':dry' : '');
+    out.push(await runAgent(agent, user.id, date, 'agent', key, now, opts.dryRun));
   }
   return out;
 }

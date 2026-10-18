@@ -1,6 +1,7 @@
 import {decryptSecret, encryptSecret} from './crypto';
 import {logEvent} from './log';
 import {providerFetch, type FetchOptions} from './provider-fetch';
+import {saveSyncCursor} from './sync-cursor';
 import {getCredential, markCredentialRevoked, saveCredential} from './store';
 import {dayBounds, parseEventTime} from './time';
 import {TIMEZONE, type CalendarEvent, type SourceHealth} from './types';
@@ -10,7 +11,7 @@ export const PROVIDER = 'google_calendar';
 export const STATE_COOKIE = 'deevaa_gcal_nonce';
 const MAX_CALENDARS = 10;
 const MAX_EVENT_PAGES = 10;
-const EVENT_FIELDS = 'nextPageToken,items(id,iCalUID,status,summary,start,end,transparency,eventType,htmlLink,attendees(self,responseStatus))';
+const EVENT_FIELDS = 'nextPageToken,nextSyncToken,items(id,iCalUID,status,summary,start,end,transparency,eventType,htmlLink,attendees(self,responseStatus))';
 
 export class GoogleError extends Error {
   constructor(public kind: 'revoked' | 'unavailable' | 'config' | 'scope' | 'no_refresh_token', message: string) {
@@ -148,7 +149,8 @@ export function normalizeEvents(items: GoogleEvent[], calendarId: string, date: 
       allDay: start.allDay,
       busy: !start.allDay && item.transparency !== 'transparent',
       htmlLink: item.htmlLink ?? null,
-      source: 'google_calendar'
+      source: 'google_calendar',
+      ...(item.status === 'tentative' ? {tentative: true} : {})
     });
   }
   return out;
@@ -169,6 +171,7 @@ async function readCalendar(accessToken: string, calendarId: string, date: strin
   const items: (CalendarEvent & {uid: string})[] = [];
   let pageToken: string | undefined;
   let pages = 0;
+  let syncToken: string | undefined;
   do {
     const q = new URLSearchParams({
       timeMin: start.toUTC().toISO()!,
@@ -192,9 +195,10 @@ async function readCalendar(accessToken: string, calendarId: string, date: strin
     const uidById = new Map(raw.map((r) => [r.id, r.iCalUID ?? r.id]));
     items.push(...normalized.map((e) => ({...e, uid: uidById.get(e.id) ?? e.id})));
     pageToken = body.nextPageToken;
+    if (typeof body.nextSyncToken === 'string') syncToken = body.nextSyncToken;
     pages++;
   } while (pageToken && pages < MAX_EVENT_PAGES);
-  return {items, truncated: Boolean(pageToken)};
+  return {items, truncated: Boolean(pageToken), syncToken};
 }
 
 export async function fetchCalendarEvents(userId: string, date: string, opts: FetchOptions = {}): Promise<{events: CalendarEvent[]; health: SourceHealth}> {
@@ -214,8 +218,9 @@ export async function fetchCalendarEvents(userId: string, date: string, opts: Fe
     let failed = 0;
     for (const calendarId of cred.calendarIds.length ? cred.calendarIds : ['primary']) {
       try {
-        const {items, truncated} = await readCalendar(access_token, calendarId, date, opts);
+        const {items, truncated, syncToken} = await readCalendar(access_token, calendarId, date, opts);
         all.push(...items);
+        if (syncToken) await saveSyncCursor(userId, `google_calendar:${calendarId}`, syncToken);
         if (truncated) warnings.push('A calendar had more events than could be read; some events may be missing.');
       } catch (e) {
         if (e instanceof GoogleError && e.kind === 'revoked') throw e;

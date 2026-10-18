@@ -183,4 +183,147 @@ CREATE UNIQUE INDEX IF NOT EXISTS email_items_user_permalink ON email_items(user
 CREATE INDEX IF NOT EXISTS email_items_user_updated ON email_items(user_id, updated_at DESC);
 `;
 
-export const MIGRATIONS = [MIGRATION_0001, MIGRATION_0002, MIGRATION_0003, MIGRATION_0004, MIGRATION_0005];
+export const MIGRATION_0006 = `
+ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS correlation_id text;
+
+CREATE TABLE IF NOT EXISTS user_settings (
+  user_id uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  timezone text NOT NULL DEFAULT 'America/Los_Angeles',
+  quiet_start text NOT NULL DEFAULT '22:30',
+  quiet_end text NOT NULL DEFAULT '07:00',
+  pause_all boolean NOT NULL DEFAULT false,
+  maintenance_mode boolean NOT NULL DEFAULT false,
+  life_area_visibility jsonb NOT NULL DEFAULT '{}'::jsonb,
+  agent_budgets jsonb NOT NULL DEFAULT '{}'::jsonb,
+  feature_flags jsonb NOT NULL DEFAULT '{}'::jsonb,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS life_areas (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  slug text NOT NULL,
+  name text NOT NULL,
+  visibility text NOT NULL DEFAULT 'private',
+  sort_order integer NOT NULL DEFAULT 0,
+  archived boolean NOT NULL DEFAULT false,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS life_areas_user_slug ON life_areas(user_id, slug);
+
+CREATE TABLE IF NOT EXISTS sync_cursors (
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  connector text NOT NULL,
+  cursor text NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, connector)
+);
+
+CREATE TABLE IF NOT EXISTS agent_definitions (
+  id text PRIMARY KEY,
+  title text NOT NULL,
+  mission text NOT NULL,
+  scopes jsonb NOT NULL DEFAULT '[]'::jsonb,
+  memory_partition text NOT NULL DEFAULT 'work',
+  output_contract text NOT NULL,
+  daily_token_budget integer NOT NULL DEFAULT 8000,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS agent_runs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  agent_id text NOT NULL,
+  goal text,
+  parent_run_id uuid,
+  trigger text NOT NULL,
+  scheduled_for timestamptz,
+  status text NOT NULL,
+  checkpoint jsonb,
+  started_at timestamptz,
+  finished_at timestamptz,
+  cost_tokens integer NOT NULL DEFAULT 0,
+  logs jsonb NOT NULL DEFAULT '[]'::jsonb,
+  artifacts jsonb NOT NULL DEFAULT '[]'::jsonb,
+  verifier_result jsonb,
+  error text,
+  idempotency_key text NOT NULL UNIQUE,
+  legacy_run_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS agent_runs_user_status ON agent_runs(user_id, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS tool_invocations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_id uuid REFERENCES agent_runs(id) ON DELETE CASCADE,
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  tool text NOT NULL,
+  scope text NOT NULL,
+  input_hash text NOT NULL,
+  status text NOT NULL,
+  output_ref text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS approval_requests (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  run_id uuid REFERENCES agent_runs(id) ON DELETE SET NULL,
+  action text NOT NULL,
+  risk text NOT NULL,
+  payload jsonb NOT NULL,
+  payload_hash text NOT NULL,
+  evidence text,
+  status text NOT NULL,
+  expires_at timestamptz NOT NULL,
+  decided_at timestamptz,
+  execution_result jsonb,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS approval_requests_user_status ON approval_requests(user_id, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS memory_records (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  partition text NOT NULL,
+  body text NOT NULL,
+  provenance text NOT NULL,
+  confidence text NOT NULL DEFAULT 'stated',
+  consent text NOT NULL DEFAULT 'private',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  deleted_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS memory_records_user_partition ON memory_records(user_id, partition, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS handoffs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  from_run_id uuid REFERENCES agent_runs(id) ON DELETE SET NULL,
+  to_agent_id text NOT NULL,
+  payload jsonb NOT NULL,
+  status text NOT NULL DEFAULT 'queued',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS calendar_blocks (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title text NOT NULL,
+  start timestamptz NOT NULL,
+  ends_at timestamptz NOT NULL,
+  source text NOT NULL DEFAULT 'deevaa',
+  status text NOT NULL DEFAULT 'proposed',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS worker_heartbeats (
+  worker_id text PRIMARY KEY,
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind text NOT NULL,
+  status text NOT NULL,
+  seen_at timestamptz NOT NULL DEFAULT now()
+);
+`;
+
+export const MIGRATIONS = [MIGRATION_0001, MIGRATION_0002, MIGRATION_0003, MIGRATION_0004, MIGRATION_0005, MIGRATION_0006];

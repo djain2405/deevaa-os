@@ -1,4 +1,5 @@
 import {and, desc, eq, gte, notInArray, sql} from 'drizzle-orm';
+import {correlationFromRequest} from './correlation';
 import {randomUUID} from 'node:crypto';
 import {getDb} from './db/client';
 import {auditEvents, briefings, locks, oauthCredentials, runs, users} from './db/schema';
@@ -22,7 +23,8 @@ export async function audit(
   detail: Record<string, string | number | boolean | null> = {}
 ) {
   const db = await getDb();
-  await db.insert(auditEvents).values({userId, action, result, detail});
+  const correlationId = await correlationFromRequest();
+  await db.insert(auditEvents).values({userId, action, result, detail, correlationId});
 }
 
 export async function listAudit(userId: string, limit = 50) {

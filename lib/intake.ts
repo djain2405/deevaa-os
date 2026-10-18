@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto';
+import {answerCosQuery, matchCosQuery} from './cos-queries';
 import {defaultDeps as briefingDeps, runBriefing, type RunOutcome} from './briefing-service';
 import {extractItems, type Extracted} from './intake-ai';
 import {dice, planOps, type PlannedOp} from './intake-match';
@@ -248,6 +249,13 @@ function writesOf(items: ItemResult[]): IntakeResult['writes'] {
   return 'none';
 }
 
+/** Same pipeline as chat, for a voice transcript or pasted note. */
+export async function processImportedNote(input: {userId: string; message: string; clientKey: string; source?: string}, deps: IntakeDeps = defaultIntakeDeps) {
+  const result = await processMessage(input, deps);
+  await audit(input.userId, 'intake.import', 'ok', {source: input.source ?? 'import'});
+  return result;
+}
+
 /** Chat message → extraction → Notion reconciliation → verified write → stored reply → refreshed briefing. */
 export async function processMessage(input: {userId: string; message: string; clientKey: string}, deps: IntakeDeps = defaultIntakeDeps): Promise<IntakeResult> {
   const {userId, message, clientKey} = input;
@@ -258,6 +266,27 @@ export async function processMessage(input: {userId: string; message: string; cl
   }
   const messageId = inserted.message.id;
   const now = deps.now();
+  const query = matchCosQuery(message);
+  if (query) {
+    const read = await deps.fetchTasks();
+    if (read.health.state === 'connected') {
+      const answered = answerCosQuery(query, read.tasks, now);
+      const result: IntakeResult = {
+        messageId,
+        extractor: 'rules',
+        extractorNote: 'Answered from Notion. Nothing was written.',
+        items: [],
+        notes: [],
+        clarifications: answered.clarifications,
+        writes: 'none',
+        briefing: null,
+        reply: answered.reply
+      };
+      await insertAssistantMessage(userId, result.reply, result, messageId);
+      await audit(userId, 'intake.query', 'ok', {kind: query.kind});
+      return result;
+    }
+  }
   const extracted = await deps.extract(message, now);
   const notes = await storeNotes(userId, messageId, extracted.items);
   const taskItems = extracted.items.filter((i) => i.kind === 'new_task' || i.kind === 'status_update');

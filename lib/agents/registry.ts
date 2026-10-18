@@ -2,7 +2,7 @@ import {DateTime} from 'luxon';
 import {TIMEZONE} from '../types';
 import {runGmailMorning} from './gmail-morning';
 
-export type AgentHandler = (ctx: {userId: string; localDate: string; runId: string; now: Date}) => Promise<{briefingId?: string}>;
+export type AgentHandler = (ctx: {userId: string; localDate: string; runId: string; now: Date; dryRun?: boolean}) => Promise<{briefingId?: string}>;
 
 export type AgentDef = {
   id: string;

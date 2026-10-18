@@ -84,10 +84,9 @@ export function extractWithRules(message: string, now: Date): Extraction {
       if (HYPOTHETICAL.test(sentence) && (NEED.test(sentence) || DONE.test(sentence))) skippedHypothetical++;
       continue;
     }
-    const sentenceDates = findDates(sentence, now);
     const clauses = sentence.split(SPLIT).map((c) => c.trim()).filter(Boolean);
     const own: ExtractedItem[] = [];
-    const constraintDates: typeof sentenceDates = [];
+    const constraintDates: ReturnType<typeof findDates> = [];
 
     for (const clause of clauses) {
       const evidence = clause.replace(/[.!]+$/, '');
@@ -128,6 +127,21 @@ export function extractWithRules(message: string, now: Date): Extraction {
       if ((m = DONE.exec(clause)) || (m = IS_DONE.exec(clause))) {
         const target = cleanTitle(m[2] ?? m[1], dateTexts);
         if (target) own.push(item({kind: 'status_update', title: target, target, evidence, status: 'Done', userConfirmed: true}));
+        continue;
+      }
+      if ((m = /^(?!i\b|we\b)(.+?)\s+sent\s+for\s+review\b/i.exec(clause))) {
+        const target = cleanTitle(m[1], dateTexts);
+        if (target) own.push(item({kind: 'status_update', title: target, target, evidence, status: 'Waiting', userConfirmed: true, nextAction: 'Sent for review — not complete until the reviewer responds'}));
+        continue;
+      }
+      if ((m = /^(?!i\b|we\b)(.+?)\s+(?:was\s+|has been\s+)?submitted\b/i.exec(clause))) {
+        const target = cleanTitle(m[1], dateTexts);
+        if (target) own.push(item({kind: 'status_update', title: target, target, evidence, status: 'Waiting', userConfirmed: true, nextAction: 'Submitted — waiting on the response, not done'}));
+        continue;
+      }
+      if ((m = /^(?!i\b|we\b)(.+?)\s+can wait\b/i.exec(clause))) {
+        const title = cleanTitle(m[1], dateTexts);
+        if (title) own.push(item({kind: 'new_task', title, evidence, status: 'Inbox', priority: 'Low', nextAction: 'Can wait'}));
         continue;
       }
       if ((m = STARTED.exec(clause))) {

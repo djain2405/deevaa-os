@@ -17,7 +17,10 @@ export const Blueprint = z.strictObject({
   boundaries: lines,
   experiments: lines,
   lessons: lines,
-  context: lines
+  context: lines,
+  values: lines,
+  identity: lines,
+  nonNegotiables: lines
 });
 export type Blueprint = z.infer<typeof Blueprint>;
 export type BlueprintField = keyof Blueprint;
@@ -35,7 +38,10 @@ export const BLUEPRINT_FIELDS: {key: BlueprintField; label: string; hint: string
   {key: 'boundaries', label: 'Approval and privacy boundaries', hint: 'What Deevaa must never do or touch.'},
   {key: 'experiments', label: 'Current behavioral experiments', hint: 'Habits you are trying out.'},
   {key: 'lessons', label: 'Lessons', hint: 'Reflections you want to keep.'},
-  {key: 'context', label: 'Personal context', hint: 'Facts you have confirmed and want Deevaa to remember.'}
+  {key: 'context', label: 'Personal context', hint: 'Facts you have confirmed and want Deevaa to remember.'},
+  {key: 'values', label: 'Values', hint: 'What you refuse to trade away.'},
+  {key: 'identity', label: 'Desired identity', hint: 'Who you are practicing being.'},
+  {key: 'nonNegotiables', label: 'Non-negotiables', hint: 'Constraints that outrank a busy day.'}
 ];
 
 export const emptyBlueprint = (): Blueprint => Object.fromEntries(BLUEPRINT_FIELDS.map((f) => [f.key, []])) as unknown as Blueprint;

@@ -1,7 +1,7 @@
 import {previewSha256, type ImportPreview} from '@/lib/blueprint-import';
 import {applyImportPreview} from '@/lib/import-apply';
 import {apiError, forbiddenOrigin, isSameOrigin, privateJson, unauthorized} from '@/lib/http';
-import {findAppliedImport, getImportPreview, markImportApplied} from '@/lib/import-store';
+import {getImportPreview, markImportApplied} from '@/lib/import-store';
 import {logEvent} from '@/lib/log';
 import {getSessionUser} from '@/lib/session';
 import {audit} from '@/lib/store';

@@ -1,5 +1,6 @@
 import path from 'node:path';
 import type {PgDatabase, PgQueryResultHKT} from 'drizzle-orm/pg-core';
+import {assertProductionEnv} from '../env';
 import * as schema from './schema';
 import {MIGRATIONS} from './migrations';
 
@@ -24,6 +25,7 @@ async function migratePostgres(url: string) {
 }
 
 async function connect(): Promise<Db> {
+  assertProductionEnv();
   const url = process.env.DATABASE_URL?.trim();
   if (url) {
     await migratePostgres(url);

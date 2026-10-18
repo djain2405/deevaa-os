@@ -68,6 +68,7 @@ export type CalendarEvent = {
   busy: boolean;
   htmlLink: string | null;
   source: 'google_calendar';
+  tentative?: boolean;
 };
 
 export type SourceState = 'connected' | 'not_connected' | 'error';
@@ -84,6 +85,15 @@ export type SourceHealth = {
 export type Interval = {start: string; end: string};
 
 export type BlockLabel = 'FOCUS' | 'CLOSE' | 'MAINTAIN' | 'EXPAND';
+export type BlockRole = 'deep_focus' | 'commitments' | 'life_logistics' | 'recovery';
+
+/** Existing block labels stay. Roles are the blueprint names for the same four blocks. */
+export const BLOCK_ROLE: Record<BlockLabel, BlockRole> = {
+  FOCUS: 'deep_focus',
+  CLOSE: 'commitments',
+  MAINTAIN: 'life_logistics',
+  EXPAND: 'recovery'
+};
 
 export type TaskRef = Pick<Task, 'id' | 'title' | 'status' | 'priority' | 'due' | 'duration' | 'url' | 'sourceLink' | 'source'> & {
   project?: string | null;
@@ -97,6 +107,7 @@ export type RadarItem = {
 
 export type Block = {
   label: BlockLabel;
+  role?: BlockRole;
   state: 'scheduled' | 'unscheduled' | 'omitted';
   task: TaskRef | null;
   start: string | null;
@@ -116,12 +127,15 @@ export type RankedTask = TaskRef & {
   aiNote?: string;
 };
 
+export type EmailBucket = 'important' | 'needs_response' | 'waiting' | 'informational' | 'deadline';
+
 export type EmailAction = {
   title: string;
   due: string | null;
   why: string;
   permalink: string;
   evidence: string;
+  bucket?: EmailBucket;
 };
 
 export type EmailSummary = {
@@ -129,6 +143,7 @@ export type EmailSummary = {
   from: string;
   why: string;
   permalink: string;
+  bucket?: EmailBucket;
 };
 
 export type EmailDigest = {
@@ -137,6 +152,7 @@ export type EmailDigest = {
   actions: EmailAction[];
   summaries: EmailSummary[];
   warnings: string[];
+  buckets?: {bucket: EmailBucket; count: number}[];
 };
 
 export type BriefingSnapshot = {

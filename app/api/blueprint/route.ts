@@ -59,7 +59,7 @@ export async function PUT(req: Request) {
   const row = await saveBlueprint(user.id, parsed.data, body.version);
   if (!row) return apiError(409, 'stale', 'The Blueprint changed since you opened it. Reload and try again.');
   await audit(user.id, 'blueprint.save', 'ok', {version: row.version});
-  let notion = await publishLifeBlueprintToNotion(user.id, parsed.data).catch((e) => {
+  const notion = await publishLifeBlueprintToNotion(user.id, parsed.data).catch((e) => {
     logEvent('error', 'blueprint.publish', {kind: e instanceof Error ? e.name : 'unknown'});
     return {status: 'failed' as const, url: null, message: 'Could not publish Life Blueprint to Notion.'};
   });

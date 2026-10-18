@@ -1,6 +1,7 @@
 import {decryptSecret, encryptSecret} from './crypto';
 import {logEvent} from './log';
 import {providerFetch, type FetchOptions} from './provider-fetch';
+import {getSyncCursor, saveSyncCursor} from './sync-cursor';
 import {getCredential, markCredentialRevoked, saveCredential} from './store';
 import type {SourceHealth} from './types';
 
@@ -298,13 +299,24 @@ export async function fetchGmailMessages(
     }
     if (ids.length && failed === ids.length) throw new GmailError('unavailable', 'Gmail could not be read.');
     if (failed) warnings.push('Some messages could not be read; the digest may be incomplete.');
+    const prior = await getSyncCursor(userId, 'google_gmail');
+    let seen = new Set<string>();
+    try {
+      const parsed = prior ? (JSON.parse(prior.cursor) as {ids?: unknown}) : null;
+      if (Array.isArray(parsed?.ids)) seen = new Set(parsed.ids.filter((id): id is string => typeof id === 'string'));
+    } catch {
+      seen = new Set();
+    }
+    const fresh = messages.filter((m) => !seen.has(m.id));
+    const nextIds = [...seen, ...messages.map((m) => m.id)].slice(-1000);
+    await saveSyncCursor(userId, 'google_gmail', JSON.stringify({ids: nextIds}));
     return {
-      messages,
+      messages: fresh,
       health: {
         state: 'connected',
-        message: `Read ${messages.length} inbox message(s) from the last 24 hours.`,
+        message: `Read ${fresh.length} inbox message(s) from the last 24 hours.`,
         lastSyncedAt: new Date().toISOString(),
-        count: messages.length,
+        count: fresh.length,
         warnings
       }
     };

@@ -3,6 +3,7 @@ import {alignment, type Blueprint} from './blueprint';
 import {assignLane, careerResearchTasks, laneRank, recommendNextAction} from './decision';
 import {atLocal, daysUntil, formatLocalTime, localDate} from './time';
 import {
+  BLOCK_ROLE,
   BRIEFING_VERSION,
   TIMEZONE,
   type Block,
@@ -220,11 +221,11 @@ class Allocator {
 
 const window = (slot: Interval) => `${formatLocalTime(slot.start)}–${formatLocalTime(slot.end)}`;
 
-export function planBlocks(ranked: RankedTask[], gaps: Gap[] | null): Block[] {
+export function planBlocks(ranked: RankedTask[], gaps: Gap[] | null, opts?: {maxShare?: number}): Block[] {
   const ready = ranked.filter((t) => t.executable && t.lane !== 'Verify');
   const used = new Set<string>();
   const freeTotal = gaps ? gaps.reduce((s, g) => s + minutes(g), 0) : 0;
-  const alloc = gaps ? new Allocator(gaps.map((g) => ({...g})), Math.floor(freeTotal * MAX_PLANNED_SHARE)) : null;
+  const alloc = gaps ? new Allocator(gaps.map((g) => ({...g})), Math.floor(freeTotal * (opts?.maxShare ?? MAX_PLANNED_SHARE))) : null;
   const noCalendar = 'Calendar not connected, so no time window is claimed.';
 
   function assign(label: Block['label'], candidates: RankedTask[], length: (t: RankedTask) => number, why: string, none: string): Block {
@@ -293,7 +294,7 @@ export function planBlocks(ranked: RankedTask[], gaps: Gap[] | null): Block[] {
           reason: alloc.hasSpace(EXPAND_MINUTES) ? 'Skipped to keep slack in an already full day.' : 'Not enough open time left; skipped rather than overbooking the day.'
         };
   }
-  return [focus, close, maintain, expand];
+  return [focus, close, maintain, expand].map((block) => ({...block, role: BLOCK_ROLE[block.label]}));
 }
 
 const RADAR_ORDER: RadarItem['kind'][] = ['blocked_deadline', 'overdue', 'due_soon', 'stale_waiting'];
@@ -333,6 +334,10 @@ export type PlanInput = {
   notion: SourceHealth;
   calendar: SourceHealth;
   blueprint?: Blueprint | null;
+  /** Tired days skip high-energy work and leave more of the day unscheduled. */
+  capacityMode?: 'normal' | 'tired';
+  /** ISO timestamp. Free windows after this are not used. */
+  hardStop?: string;
 };
 
 export function buildBriefing(input: PlanInput): BriefingSnapshot {
@@ -348,11 +353,30 @@ export function buildBriefing(input: PlanInput): BriefingSnapshot {
   if (input.date < localDate(now)) warnings.push('This briefing is for a past date.');
 
   let ranked = notionOk ? rankTasks(input.tasks, input.date, input.blueprint ?? null) : [];
-  const gaps = calendarOk ? freeWindows(input.date, input.events, now) : null;
+  if (input.capacityMode === 'tired') {
+    ranked = ranked.map((t) =>
+      t.energy === 'High'
+        ? {...t, executable: false, excludedReason: 'High-energy work is skipped on a tired day.', reasons: [...t.reasons, 'Tired day: high energy skipped']}
+        : t
+    );
+  }
+  let gaps = calendarOk ? freeWindows(input.date, input.events, now) : null;
+  if (gaps && input.hardStop) {
+    const stop = DateTime.fromISO(input.hardStop).setZone(TIMEZONE);
+    if (stop.isValid) {
+      gaps = gaps
+        .flatMap((gap) => {
+          if (gap.start >= stop) return [];
+          return [gap.end > stop ? {...gap, end: stop} : gap];
+        })
+        .filter((gap) => minutes(gap) >= MIN_GAP);
+    }
+  }
   const blocks: Block[] = notionOk
-    ? planBlocks(ranked, gaps)
+    ? planBlocks(ranked, gaps, input.capacityMode === 'tired' ? {maxShare: 0.45} : undefined)
     : (['FOCUS', 'CLOSE', 'MAINTAIN', 'EXPAND'] as const).map((label) => ({
         label,
+        role: BLOCK_ROLE[label],
         state: 'omitted' as const,
         task: null,
         start: null,

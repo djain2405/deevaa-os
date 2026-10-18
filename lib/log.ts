@@ -1,3 +1,5 @@
+import {currentCorrelation} from './correlation';
+
 type Level = 'info' | 'warn' | 'error';
 type Field = string | number | boolean | null | undefined;
 
@@ -20,7 +22,7 @@ export function sanitizeFields(fields: Record<string, unknown>): Record<string, 
 }
 
 export function logEvent(level: Level, op: string, fields: Record<string, unknown> = {}) {
-  const line = JSON.stringify({level, op, at: new Date().toISOString(), ...sanitizeFields(fields)});
+  const line = JSON.stringify({level, op, at: new Date().toISOString(), correlationId: currentCorrelation(), ...sanitizeFields(fields)});
   if (level === 'error') console.error(line);
   else if (level === 'warn') console.warn(line);
   else console.info(line);

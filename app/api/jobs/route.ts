@@ -1,5 +1,6 @@
 import {dispatchDueAgents} from '@/lib/agents/dispatch';
 import {runView} from '@/lib/briefing-view';
+import {bindRequest} from '@/lib/correlation';
 import {apiError, bearerMatches, privateJson} from '@/lib/http';
 import {logEvent} from '@/lib/log';
 
@@ -16,11 +17,13 @@ function statusOf(outcomes: string[]) {
 async function handle(req: Request) {
   if (!bearerMatches(req, process.env.CRON_SECRET)) return apiError(401, 'unauthorized', 'Invalid scheduler credentials.');
   if (!process.env.ALLOWED_EMAIL) return apiError(500, 'not_configured', 'The scheduler is not configured.');
+  bindRequest(req);
   const url = new URL(req.url);
   const force = url.searchParams.get('force') === '1';
+  const dryRun = url.searchParams.get('dry') === '1';
   const agentId = url.searchParams.get('agent') ?? undefined;
   try {
-    const jobs = await dispatchDueAgents(new Date(), {force, agentId});
+    const jobs = await dispatchDueAgents(new Date(), {force, agentId, dryRun});
     logEvent('info', 'jobs.dispatch', {count: jobs.length});
     return privateJson(
       {
