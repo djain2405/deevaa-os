@@ -14,8 +14,10 @@ export function draftReply(action: Pick<EmailAction, 'title' | 'permalink' | 'ev
 }
 
 /** Stores draft replies and task candidates as approvals. Nothing is sent or written to Notion. */
-export async function proposeFromDigest(userId: string, localDate: string, actions: EmailAction[]) {
-  if (!actions.length) return [];
+export async function proposeFromDigest(userId: string, localDate: string, actions: EmailAction[], unseenIds?: string[]) {
+  const unseen = unseenIds ? new Set(unseenIds) : null;
+  const fresh = unseen ? actions.filter((action) => action.messageId && unseen.has(action.messageId)) : actions;
+  if (!fresh.length) return [];
   const decision = decideTool('gmail.send');
   const run = await enqueueAgentRun({
     userId,
@@ -25,7 +27,7 @@ export async function proposeFromDigest(userId: string, localDate: string, actio
     idempotencyKey: `gmail-proposals:${userId}:${localDate}`
   });
   const rows = [];
-  for (const action of actions.slice(0, 8)) {
+  for (const action of fresh.slice(0, 8)) {
     const draft = draftReply(action);
     rows.push(
       await createApproval({

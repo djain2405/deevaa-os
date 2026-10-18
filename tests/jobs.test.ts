@@ -11,6 +11,8 @@ import {freshDb, json, mockFetch} from './helpers';
 const SECRET = 'scheduler-secret-0123456789abcdef';
 const SEVEN_AM_PT = new Date('2026-10-14T14:00:00Z');
 const SIX_AM_PT = new Date('2026-10-14T13:00:00Z');
+const NINE_AM_PT = new Date('2026-10-14T16:00:00Z');
+const ONE_PM_PT = new Date('2026-10-14T20:00:00Z');
 
 function call(method: 'GET' | 'POST' = 'GET') {
   const req = new Request('https://deevaa.example/api/jobs', {method, headers: {authorization: `Bearer ${SECRET}`}});
@@ -22,6 +24,7 @@ let userId: string;
 beforeEach(async () => {
   await freshDb();
   vi.stubEnv('CRON_SECRET', SECRET);
+  vi.stubEnv('ALLOWED_EMAIL', 'owner@example.com');
   vi.stubEnv('OPENAI_API_KEY', '');
   vi.useFakeTimers({toFake: ['Date'], now: SEVEN_AM_PT});
   userId = (await getOrCreateUser('owner@example.com')).id;
@@ -51,6 +54,28 @@ describe('job dispatcher', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.jobs).toEqual([expect.objectContaining({agentId: 'gmail.morning', outcome: 'skipped', date: '2026-10-14', run: null})]);
+    expect(await listRuns(userId, '2026-10-14')).toHaveLength(0);
+  });
+
+  it('catches up until noon when the 7:00 run never succeeded, then skips', async () => {
+    vi.setSystemTime(NINE_AM_PT);
+    const first = await call();
+    expect(first.status).toBe(200);
+    expect((await first.json()).jobs[0].outcome).toBe('created');
+    expect(await listRuns(userId, '2026-10-14')).toHaveLength(1);
+
+    const again = await call();
+    expect((await again.json()).jobs[0].outcome).toBe('skipped');
+
+    vi.setSystemTime(ONE_PM_PT);
+    const late = await (await call()).json();
+    expect(late.jobs[0].outcome).toBe('skipped');
+  });
+
+  it('does not catch up after noon when 7:00 never ran', async () => {
+    vi.setSystemTime(ONE_PM_PT);
+    const res = await call();
+    expect((await res.json()).jobs[0]).toMatchObject({agentId: 'gmail.morning', outcome: 'skipped', run: null});
     expect(await listRuns(userId, '2026-10-14')).toHaveLength(0);
   });
 

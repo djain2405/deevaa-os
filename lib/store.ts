@@ -161,6 +161,12 @@ export async function listRuns(userId: string, localDate: string) {
   return db.select().from(runs).where(and(eq(runs.userId, userId), eq(runs.localDate, localDate))).orderBy(desc(runs.startedAt));
 }
 
+export async function getRunByKey(idempotencyKey: string) {
+  const db = await getDb();
+  const [row] = await db.select().from(runs).where(eq(runs.idempotencyKey, idempotencyKey));
+  return row ?? null;
+}
+
 export async function upsertBriefing(input: {
   userId: string;
   localDate: string;

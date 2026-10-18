@@ -156,6 +156,7 @@ export type EmailAction = {
   permalink: string;
   evidence: string;
   bucket?: EmailBucket;
+  messageId?: string;
 };
 
 export type EmailSummary = {

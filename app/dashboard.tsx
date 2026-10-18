@@ -98,6 +98,11 @@ const GMAIL_MESSAGES: Record<string, string> = {
 
 const TRIGGER_LABEL: Record<string, string> = {cron: 'scheduled run', manual: 'you', initial: 'first load', agent: 'email agent'};
 
+function localHour(timezone?: string) {
+  const hour = new Intl.DateTimeFormat('en-US', {timeZone: timezone || 'America/Los_Angeles', hour: 'numeric', hour12: false, hourCycle: 'h23'}).format(new Date());
+  return Number(hour);
+}
+
 function TaskLinks({task}: {task: TaskRef}) {
   return (
     <span className="links">
@@ -542,7 +547,11 @@ export default function Dashboard() {
             </>
           )}
           {!digest && conn?.gmail.state === 'connected' && (
-            <p className="muted">No digest yet. The 7:00 AM Pacific job will fill this, or refresh mail now.</p>
+            <p className="muted">
+              {localHour(b?.timezone) >= 8
+                ? 'Morning job did not run; Refresh mail now.'
+                : 'No digest yet. The 7:00 AM Pacific job will fill this, or refresh mail now.'}
+            </p>
           )}
         </section>
       )}

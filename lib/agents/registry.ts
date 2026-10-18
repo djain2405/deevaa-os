@@ -32,3 +32,16 @@ export function agentLocalDate(agent: AgentDef, now: Date) {
 export function isAgentDue(agent: AgentDef, now: Date) {
   return DateTime.fromJSDate(now).setZone(agent.timezone).hour === agent.localHour;
 }
+
+/** Local hour on the agent's timezone. */
+export function agentLocalHour(agent: AgentDef, now: Date) {
+  return DateTime.fromJSDate(now).setZone(agent.timezone).hour;
+}
+
+/** Catch-up window after the scheduled hour, inclusive of noon (hour 12). */
+export const CATCH_UP_UNTIL_HOUR = 12;
+
+export function isCatchUpHour(agent: AgentDef, now: Date) {
+  const hour = agentLocalHour(agent, now);
+  return hour > agent.localHour && hour <= CATCH_UP_UNTIL_HOUR;
+}

@@ -18,6 +18,10 @@ export const TRAVEL_RE =
   /\b(flight|itinerary|boarding pass|check[- ]?in|gate change|departure|layover|your trip|travel reminder)\b/i;
 export const TRANSACTIONAL_RE =
   /\b(receipt|your (?:order|purchase|payment)|order confirmation|shipping (?:confirmation|update|notification)|has shipped|out for delivery|tracking number|package delivered|delivered to|thanks for your (?:purchase|payment|order)|thank you for your (?:purchase|payment|order)|payment (?:received|processed|confirmed)|we(?:'|’)ve received your (?:order|payment)|purchase confirmation)\b/i;
+export const RESPONSE_RE = /\b(please reply|awaiting your|action required|can you|could you|let us know|please respond|respond)\b/i;
+export const URGENCY_RE = /\b(act fast|act now|time-sensitive|urgent|expires soon)\b/i;
+export const CONTACT_ACK_RE =
+  /\b(thank you for contacting(?: us)?|thanks for contacting(?: us)?|thank you for reaching out|thanks for reaching out|we(?:'|’)?(?:ve| have)? received your (?:message|request|inquiry|application|email))\b/i;
 const NOREPLY = /no-?reply|mailer-daemon|notifications@|newsletter|donotreply/i;
 const normalize = (s: string) => s.toLowerCase().replace(/[’‘]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, ' ').trim();
 
@@ -50,8 +54,8 @@ export function messageText(m: GmailMessage) {
 
 export function emailBucket(text: string, kind: 'action' | 'summary'): EmailBucket {
   if (DEADLINE_RE.test(text)) return 'deadline';
-  if (/\b(please reply|awaiting your|action required|can you|could you)\b/i.test(text)) return 'needs_response';
-  if (/\b(waiting on|waiting for|i(?:'|’)ll get back|we(?:'|’)ll follow up)\b/i.test(text)) return 'waiting';
+  if (RESPONSE_RE.test(text)) return 'needs_response';
+  if (CONTACT_ACK_RE.test(text) || /\b(waiting on|waiting for|i(?:'|’)ll get back|we(?:'|’)ll follow up)\b/i.test(text)) return 'waiting';
   if (kind === 'summary') return 'informational';
   return 'important';
 }
@@ -117,7 +121,9 @@ export function classifyEmail(text: string, now: Date): {kind: 'action' | 'summa
     const travelDue = firstUpcomingDate(text, now);
     return travelDue ? {kind: 'action', due: travelDue} : {kind: 'summary', due: null};
   }
+  if (RESPONSE_RE.test(text) || URGENCY_RE.test(text)) return {kind: 'action', due: null};
   if (!transactional && MISS_RE.test(text)) return {kind: 'summary', due: null};
+  if (CONTACT_ACK_RE.test(text)) return {kind: 'summary', due: null};
   return {kind: 'skip', due: null};
 }
 
@@ -132,13 +138,19 @@ export function extractWithRules(messages: GmailMessage[], now: Date): {actions:
     const permalink = gmailPermalink(m.threadId);
     const title = (m.subject || m.snippet || 'Message').slice(0, 120);
     if (classified.kind === 'action') {
+      const evidenceRe = DEADLINE_RE.test(text) ? DEADLINE_RE : TRAVEL_RE.test(text) ? TRAVEL_RE : URGENCY_RE.test(text) ? URGENCY_RE : RESPONSE_RE;
       actions.push({
         title,
         due: classified.due,
-        why: classified.due ? `Remaining deadline ${classified.due} quoted from this message.` : 'Time-sensitive language in this message.',
+        why: classified.due
+          ? `Remaining deadline ${classified.due} quoted from this message.`
+          : RESPONSE_RE.test(text)
+            ? 'This message asks for a reply.'
+            : 'Time-sensitive language in this message.',
         permalink,
-        evidence: quoteAround(text, DEADLINE_RE.test(text) ? DEADLINE_RE : TRAVEL_RE),
-        bucket: emailBucket(text, 'action')
+        evidence: quoteAround(text, evidenceRe),
+        bucket: emailBucket(text, 'action'),
+        messageId: m.id
       });
       continue;
     }
@@ -146,7 +158,11 @@ export function extractWithRules(messages: GmailMessage[], now: Date): {actions:
       summaries.push({
         subject: title,
         from: displayFrom(m.from),
-        why: TRAVEL_RE.test(text) ? 'Travel or itinerary — easy to miss.' : 'Flagged as easy to miss (verification, offer, or similar).',
+        why: CONTACT_ACK_RE.test(text)
+          ? 'A reply or acknowledgement landed in Primary.'
+          : TRAVEL_RE.test(text)
+            ? 'Travel or itinerary — easy to miss.'
+            : 'Flagged as easy to miss (verification, offer, or similar).',
         permalink,
         bucket: emailBucket(text, 'summary')
       });
@@ -184,17 +200,17 @@ export function groundModelOutput(
       continue;
     }
     const classified = classifyEmail(text, now);
-    if (classified.kind === 'skip') {
+    if (classified.kind === 'skip' && isTransactional(text)) {
       dropped++;
       continue;
     }
-    let due: string | null = classified.due;
-    if (item.due) {
+    let due: string | null = classified.kind === 'skip' ? null : classified.due;
+    if (item.due && classified.kind !== 'skip') {
       const allowed = findDates(text, now).some((match) => dueFrom(match).due === item.due);
       const candidate = allowed ? item.due : null;
       if (candidate && daysUntil(candidate, today) >= 0 && daysUntil(candidate, today) <= 14) due = candidate;
     }
-    if (classified.kind === 'summary' && !due) {
+    if (classified.kind === 'skip' || (classified.kind === 'summary' && !due)) {
       summaries.push({
         subject: (m.subject || 'Message').slice(0, 120),
         from: displayFrom(m.from),
@@ -210,7 +226,8 @@ export function groundModelOutput(
       why: item.why.slice(0, 300) || 'Time-sensitive item quoted from this message.',
       permalink: gmailPermalink(m.threadId),
       evidence,
-      bucket: emailBucket(text, 'action')
+      bucket: emailBucket(text, 'action'),
+      messageId: m.id
     });
   }
   for (const item of parsed.data.summaries) {
@@ -220,7 +237,7 @@ export function groundModelOutput(
       continue;
     }
     const text = messageText(m);
-    if (classifyEmail(text, now).kind === 'skip') {
+    if (classifyEmail(text, now).kind === 'skip' && isTransactional(text)) {
       dropped++;
       continue;
     }

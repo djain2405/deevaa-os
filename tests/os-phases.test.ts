@@ -138,15 +138,15 @@ describe('phase 02 and 03 life model and capture', () => {
 });
 
 describe('phase 04 to 06 mail, calendar, and chief of staff', () => {
-  it('buckets mail, drafts without sending, and skips already seen messages', async () => {
+  it('buckets mail, drafts without sending, and still lists already seen messages', async () => {
     const now = new Date('2026-10-14T14:00:00Z');
     const messages = [
       {id: '1', threadId: 't1', subject: 'Visa interview', from: 'Ann <ann@example.com>', snippet: 'Please reply about your visa interview.', excerpt: '', labelIds: ['INBOX'], internalDate: now.getTime()}
     ];
     const extracted = extractMail(messages, now);
-    expect(extracted.summaries[0].bucket).toBe('needs_response');
+    expect(extracted.actions[0].bucket).toBe('needs_response');
     expect(emailBucket('Waiting on Sam for the draft', 'summary')).toBe('waiting');
-    const draft = draftReply({title: extracted.summaries[0].subject, permalink: extracted.summaries[0].permalink, evidence: 'Please reply about your visa interview.'});
+    const draft = draftReply({title: extracted.actions[0].title, permalink: extracted.actions[0].permalink, evidence: 'Please reply about your visa interview.'});
     expect(draft.send).toBe(false);
     expect(draft.action).toBe('gmail.send');
 
@@ -164,7 +164,9 @@ describe('phase 04 to 06 mail, calendar, and chief of staff', () => {
     const first = await fetchGmailMessages(userId, {fetchImpl: impl, retryDelayMs: 0});
     const second = await fetchGmailMessages(userId, {fetchImpl: impl, retryDelayMs: 0});
     expect(first.messages.map((m) => m.id)).toEqual(['pay']);
-    expect(second.messages).toEqual([]);
+    expect(second.messages.map((m) => m.id)).toEqual(['pay']);
+    expect(first.unseenIds).toEqual(['pay']);
+    expect(second.unseenIds).toEqual([]);
   });
 
   it('surfaces calendar conflicts and prep proposals without writing events', () => {

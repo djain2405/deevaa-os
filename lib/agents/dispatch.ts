@@ -1,8 +1,8 @@
 import {logEvent} from '../log';
 import {enqueueAgentRun, finishAgentRun} from '../runtime/store';
 import {getSettings} from '../settings';
-import {acquireLock, audit, claimRun, finishRun, getOrCreateUser, releaseLock, type RunRow} from '../store';
-import {agentLocalDate, isAgentDue, listAgents, type AgentDef} from './registry';
+import {acquireLock, audit, claimRun, finishRun, getOrCreateUser, getRunByKey, releaseLock, type RunRow} from '../store';
+import {agentLocalDate, isAgentDue, isCatchUpHour, listAgents, type AgentDef} from './registry';
 
 const LOCK_TTL_MS = 2 * 60 * 1000;
 
@@ -80,11 +80,23 @@ export async function dispatchDueAgents(now = new Date(), opts: {force?: boolean
       out.push({agentId: agent.id, outcome: 'skipped', date, run: null});
       continue;
     }
-    if (!opts.force && !isAgentDue(agent, now)) {
-      out.push({agentId: agent.id, outcome: 'skipped', date, run: null});
-      continue;
-    }
     const key = agentIdempotencyKey(agent.id, user.id, date) + (opts.dryRun ? ':dry' : '');
+    const onHour = isAgentDue(agent, now);
+    let catchUp = false;
+    if (!opts.force && !onHour) {
+      if (isCatchUpHour(agent, now)) {
+        const prior = await getRunByKey(key);
+        if (prior?.status === 'succeeded') {
+          out.push({agentId: agent.id, outcome: 'skipped', date, run: null});
+          continue;
+        }
+        catchUp = true;
+      } else {
+        out.push({agentId: agent.id, outcome: 'skipped', date, run: null});
+        continue;
+      }
+    }
+    logEvent('info', 'jobs.dispatch', {agentId: agent.id, due: catchUp ? 'catch_up' : 'on_hour'});
     out.push(await runAgent(agent, user.id, date, 'agent', key, now, opts.dryRun));
   }
   return out;

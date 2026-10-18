@@ -242,7 +242,7 @@ export async function fetchNotionTasks(
     const tasks = dedupeTasks(raw);
     if (tasks.length < raw.length) warnings.push(`${raw.length - tasks.length} duplicate Notion record(s) were merged by ExternalKey.`);
     const missingDuration = tasks.filter((t) => !['Done', 'Canceled'].includes(t.status) && t.duration === null).length;
-    if (missingDuration) warnings.push(`${missingDuration} open task(s) have no Duration, so they are only considered for Focus blocks.`);
+    if (missingDuration) warnings.push(`${missingDuration} open task(s) have no Duration in Notion; estimates are assumed.`);
     return {
       tasks,
       health: {state: 'connected', message: `Read ${tasks.length} task(s) from Notion.`, lastSyncedAt: new Date().toISOString(), count: tasks.length, warnings}

@@ -132,6 +132,21 @@ describe('grounded extraction', () => {
     expect(out.actions).toHaveLength(15);
   });
 
+  it('keeps Primary urgency and contact acknowledgements, and still skips receipts', () => {
+    const out = extractWithRules(
+      [
+        msg('fast', {subject: 'Act fast', snippet: 'Act fast — this window closes today.'}),
+        msg('ack', {subject: 'Thank you for contacting us', snippet: 'Thank you for contacting us. We received your inquiry.'}),
+        msg('pay', {subject: 'Thanks for your payment', snippet: 'Thank you for your payment of $42 today.'}),
+        msg('promo', {subject: 'Act fast sale', snippet: 'Act fast, expires soon.', labelIds: ['INBOX', 'CATEGORY_PROMOTIONS']})
+      ],
+      now
+    );
+    expect(out.actions.map((a) => a.title)).toEqual(['Act fast']);
+    expect(out.summaries.map((s) => s.subject)).toEqual(['Thank you for contacting us']);
+    expect(out.summaries[0].why).toMatch(/acknowledgement/i);
+  });
+
   it('keeps flight reminders even without due/expire language', () => {
     const out = extractWithRules(
       [
@@ -279,6 +294,7 @@ describe('Gmail OAuth and reads', () => {
     const {messages, health} = await fetchGmailMessages(userId, {fetchImpl: impl, ...fast});
     expect(health.state).toBe('connected');
     expect(messages.map((m) => m.id)).toEqual(['pay']);
+    expect(health.count).toBe(1);
     const list = calls.find((c) => c.url.includes('users/me/messages?'))!;
     expect(new URL(list.url).searchParams.get('q')).toBe(GMAIL_QUERY);
     expect(new URL(list.url).searchParams.get('maxResults')).toBe('100');
@@ -314,9 +330,13 @@ describe('Gmail OAuth and reads', () => {
     expect(messages.map((m) => m.id)).toEqual(['a', 'b']);
     expect(health.warnings).toEqual([]);
     expect(health.message).toMatch(/last 24 hours/);
+
     const lists = calls.filter((c) => c.url.includes('users/me/messages?'));
     expect(lists).toHaveLength(2);
     expect(new URL(lists[1].url).searchParams.get('pageToken')).toBe('page-2');
+    const again = await fetchGmailMessages(userId, {fetchImpl: impl, ...fast});
+    expect(again.messages.map((m) => m.id)).toEqual(['a', 'b']);
+    expect(again.unseenIds).toEqual([]);
   });
 
   it('marks a revoked refresh token and stops calling Google', async () => {

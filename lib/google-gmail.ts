@@ -237,11 +237,12 @@ async function getMessage(accessToken: string, id: string, opts: FetchOptions) {
 export async function fetchGmailMessages(
   userId: string,
   opts: FetchOptions = {}
-): Promise<{messages: GmailMessage[]; health: SourceHealth}> {
+): Promise<{messages: GmailMessage[]; unseenIds: string[]; health: SourceHealth}> {
   const cred = await getCredential(userId, GMAIL_PROVIDER);
   if (!cred) {
     return {
       messages: [],
+      unseenIds: [],
       health: {
         state: 'not_connected',
         message: 'Gmail is not connected. Connect Gmail (read-only) in Connections to include this morning’s mail.',
@@ -254,6 +255,7 @@ export async function fetchGmailMessages(
   if (cred.status === 'revoked') {
     return {
       messages: [],
+      unseenIds: [],
       health: {
         state: 'error',
         message: 'Gmail access was revoked. Reconnect Gmail.',
@@ -307,16 +309,17 @@ export async function fetchGmailMessages(
     } catch {
       seen = new Set();
     }
-    const fresh = messages.filter((m) => !seen.has(m.id));
+    const unseenIds = messages.filter((m) => !seen.has(m.id)).map((m) => m.id);
     const nextIds = [...seen, ...messages.map((m) => m.id)].slice(-1000);
     await saveSyncCursor(userId, 'google_gmail', JSON.stringify({ids: nextIds}));
     return {
-      messages: fresh,
+      messages,
+      unseenIds,
       health: {
         state: 'connected',
-        message: `Read ${fresh.length} inbox message(s) from the last 24 hours.`,
+        message: `Read ${messages.length} inbox message(s) from the last 24 hours.`,
         lastSyncedAt: new Date().toISOString(),
-        count: fresh.length,
+        count: messages.length,
         warnings
       }
     };
@@ -330,6 +333,6 @@ export async function fetchGmailMessages(
         : err.kind === 'config'
           ? 'Google OAuth is not configured on the server.'
           : 'Gmail could not be read right now.';
-    return {messages: [], health: {state: 'error', message, lastSyncedAt: null, count: 0, warnings: []}};
+    return {messages: [], unseenIds: [], health: {state: 'error', message, lastSyncedAt: null, count: 0, warnings: []}};
   }
 }
