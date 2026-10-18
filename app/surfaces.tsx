@@ -43,9 +43,104 @@ export function TodayView() {
   );
 }
 
+type ProjectTask = {
+  id: string;
+  title: string;
+  notionStatus: string;
+  canonical: 'inbox' | 'next' | 'scheduled' | 'waiting' | 'someday' | 'done' | 'canceled';
+  due: string | null;
+  project: string | null;
+  url: string;
+  nextAction: string | null;
+};
+
+type ProjectFilter = 'open' | 'waiting' | 'scheduled' | 'someday' | 'done' | 'all';
+
+const PROJECT_FILTERS: {id: ProjectFilter; label: string}[] = [
+  {id: 'open', label: 'Open'},
+  {id: 'waiting', label: 'Waiting'},
+  {id: 'scheduled', label: 'Scheduled'},
+  {id: 'someday', label: 'Someday'},
+  {id: 'done', label: 'Done'},
+  {id: 'all', label: 'All'}
+];
+
+const CANONICAL_LABEL: Record<ProjectTask['canonical'], string> = {
+  inbox: 'Inbox',
+  next: 'Ready',
+  scheduled: 'Scheduled',
+  waiting: 'Waiting',
+  someday: 'Someday',
+  done: 'Done',
+  canceled: 'Canceled'
+};
+
+const CANONICAL_BADGE: Record<ProjectTask['canonical'], string> = {
+  inbox: 'pending',
+  next: 'connected',
+  scheduled: 'pending',
+  waiting: 'pending',
+  someday: 'not_connected',
+  done: 'connected',
+  canceled: 'not_connected'
+};
+
+function projectFilterMatch(task: ProjectTask, filter: ProjectFilter) {
+  switch (filter) {
+    case 'open':
+      return task.canonical !== 'done' && task.canonical !== 'canceled';
+    case 'waiting':
+      return task.canonical === 'waiting';
+    case 'scheduled':
+      return task.canonical === 'scheduled';
+    case 'someday':
+      return task.canonical === 'someday';
+    case 'done':
+      return task.canonical === 'done' || task.canonical === 'canceled';
+    default:
+      return true;
+  }
+}
+
+const CANONICAL_RANK: Record<ProjectTask['canonical'], number> = {
+  waiting: 0,
+  scheduled: 1,
+  next: 2,
+  inbox: 3,
+  someday: 4,
+  done: 5,
+  canceled: 6
+};
+
+function formatDue(due: string | null) {
+  if (!due) return null;
+  const day = due.slice(0, 10);
+  const parsed = new Date(`${day}T12:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return day;
+  return parsed.toLocaleDateString('en-US', {month: 'short', day: 'numeric', timeZone: 'UTC'});
+}
+
+function groupProjects(tasks: ProjectTask[]) {
+  const groups = new Map<string, ProjectTask[]>();
+  for (const task of tasks) {
+    const key = task.project?.trim() || 'No project';
+    const list = groups.get(key) ?? [];
+    list.push(task);
+    groups.set(key, list);
+  }
+  return [...groups.entries()]
+    .sort(([a], [b]) => (a === 'No project' ? 1 : b === 'No project' ? -1 : a.localeCompare(b)))
+    .map(([name, items]) => ({
+      name,
+      items: [...items].sort((a, b) => CANONICAL_RANK[a.canonical] - CANONICAL_RANK[b.canonical] || a.title.localeCompare(b.title))
+    }));
+}
+
 export function ProjectsView() {
-  const [tasks, setTasks] = useState<{id: string; title: string; notionStatus: string; canonical: string; url: string}[]>([]);
+  const [tasks, setTasks] = useState<ProjectTask[]>([]);
   const [note, setNote] = useState('');
+  const [loaded, setLoaded] = useState(false);
+  const [filter, setFilter] = useState<ProjectFilter>('open');
   useEffect(() => {
     const timer = setTimeout(() => {
       void fetch('/api/projects', {cache: 'no-store'})
@@ -55,21 +150,57 @@ export function ProjectsView() {
           setTasks(json.tasks ?? []);
           if (json.health?.state !== 'connected') setNote(json.health?.message ?? 'Notion is not connected.');
         })
-        .catch(() => setNote('Could not load projects.'));
+        .catch(() => setNote('Could not load projects.'))
+        .finally(() => setLoaded(true));
     }, 0);
     return () => clearTimeout(timer);
   }, []);
+  const visible = tasks.filter((task) => projectFilterMatch(task, filter));
+  const groups = groupProjects(visible);
+  const openCount = tasks.filter((task) => projectFilterMatch(task, 'open')).length;
   return (
-    <section className="panel">
-      <h2>Projects and tasks</h2>
+    <section className="panel" aria-labelledby="projects-title">
+      <div className="panel-head">
+        <h2 id="projects-title">Projects</h2>
+        {loaded && <span className="muted small">{openCount} open</span>}
+      </div>
+      <p className="muted">From Notion. Done work stays in Notion; this list starts with what is still open.</p>
       {note && <p className="muted">{note}</p>}
-      <ul className="plain">
-        {tasks.map((task) => (
-          <li key={task.id}>
-            <a href={task.url}>{task.title}</a> · {task.notionStatus} · {task.canonical}
-          </li>
+      <fieldset className="windows">
+        <legend className="small muted">Show</legend>
+        {PROJECT_FILTERS.map((item) => (
+          <button key={item.id} type="button" className={filter === item.id ? 'chip on' : 'chip'} aria-pressed={filter === item.id} onClick={() => setFilter(item.id)}>
+            {item.label}
+          </button>
         ))}
-      </ul>
+      </fieldset>
+      {!loaded && !note && <p className="muted">Loading tasks…</p>}
+      {loaded && !groups.length && <p className="muted">{filter === 'open' ? 'Nothing is open.' : 'No tasks in this view.'}</p>}
+      {groups.map((group) => (
+        <section key={group.name} className="project-group" aria-label={group.name}>
+          <h3 className="project-group-title">
+            {group.name} <span className="muted small">{group.items.length}</span>
+          </h3>
+          <ul className="plain">
+            {group.items.map((task) => (
+              <li key={task.id} className="task">
+                <div>
+                  <span className={`badge lane-badge badge-${CANONICAL_BADGE[task.canonical] ?? 'not_connected'}`}>{CANONICAL_LABEL[task.canonical] ?? task.notionStatus}</span>
+                  <strong>{task.title}</strong>
+                  <small>
+                    {[formatDue(task.due) ? `Due ${formatDue(task.due)}` : null, task.nextAction].filter(Boolean).join(' · ') || task.notionStatus}
+                  </small>
+                </div>
+                {task.url && (
+                  <a href={task.url} target="_blank" rel="noreferrer">
+                    Open in Notion<span className="visually-hidden">: {task.title} (opens in new tab)</span>
+                  </a>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
     </section>
   );
 }
