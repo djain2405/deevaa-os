@@ -72,7 +72,7 @@ function ItemRow({item}: {item: ItemResult}) {
   );
 }
 
-export function ChatPanel({writes, onChanged}: {writes: 'granted' | 'off' | null; onChanged: () => void}) {
+export function ChatPanel({writes, onChanged}: {writes: 'granted' | 'off' | null; onChanged?: () => void}) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -113,7 +113,7 @@ export function ChatPanel({writes, onChanged}: {writes: 'granted' | 'off' | null
       if (!res.ok) return setError(body?.error?.message ?? 'The message could not be processed.');
       setText('');
       await load();
-      if (body.briefing && body.briefing !== 'skipped') onChanged();
+      if (body.briefing && body.briefing !== 'skipped') onChanged?.();
     } finally {
       setSending(false);
     }
@@ -128,7 +128,7 @@ export function ChatPanel({writes, onChanged}: {writes: 'granted' | 'off' | null
       const body = await res.json().catch(() => null);
       if (!res.ok) setError(body?.error?.message ?? 'That did not work.');
       await load();
-      onChanged();
+      onChanged?.();
     } finally {
       setBusyId(null);
     }

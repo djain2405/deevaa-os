@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic';
 export default function Page() {
   return (
     <OsFrame title="Life Blueprint">
-      <BlueprintPanel onSaved={() => undefined} />
+      <BlueprintPanel />
     </OsFrame>
   );
 }

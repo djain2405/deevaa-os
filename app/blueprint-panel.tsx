@@ -36,9 +36,10 @@ const KIND_LABEL: Record<string, string> = {
   constraint: 'Scheduling constraint'
 };
 
-const toText = (data: Blueprint) => Object.fromEntries(BLUEPRINT_FIELDS.map((f) => [f.key, data[f.key].join('\n')])) as Record<BlueprintField, string>;
+const toText = (data: Blueprint) =>
+  Object.fromEntries(BLUEPRINT_FIELDS.map((f) => [f.key, (data[f.key] ?? []).join('\n')])) as Record<BlueprintField, string>;
 
-export function BlueprintPanel({onSaved}: {onSaved: () => void}) {
+export function BlueprintPanel({onSaved}: {onSaved?: () => void}) {
   const [view, setView] = useState<View | null>(null);
   const [draft, setDraft] = useState<Record<BlueprintField, string> | null>(null);
   const [message, setMessage] = useState('');
@@ -96,7 +97,7 @@ export function BlueprintPanel({onSaved}: {onSaved: () => void}) {
     const notionNote = body.notion?.message ? ` ${body.notion.message}` : '';
     setMessage(`Blueprint saved as version ${body.version}. (Each save increases the version number; that is normal.) The briefing is refreshing.${notionNote}`);
     setEditing(false);
-    onSaved();
+    onSaved?.();
   }
 
   function cancelEdit() {
@@ -112,7 +113,7 @@ export function BlueprintPanel({onSaved}: {onSaved: () => void}) {
     if (!res.ok) return setMessage(body?.error?.message ?? 'Could not update that note.');
     setView(body);
     setDraft(toText(body.data));
-    if (action === 'confirm') onSaved();
+    if (action === 'confirm') onSaved?.();
   }
 
   async function buildPreview() {
@@ -156,7 +157,7 @@ export function BlueprintPanel({onSaved}: {onSaved: () => void}) {
     const notionNote = body.notion?.message ? ` ${body.notion.message}` : '';
     setMessage((body.message ?? 'Import applied.') + notionNote);
     await load();
-    onSaved();
+    onSaved?.();
   }
 
   async function cancelImport() {
