@@ -82,7 +82,8 @@ export function AgentsView() {
       void fetch('/api/agents', {cache: 'no-store'})
         .then(async (res) => {
           const json = await res.json().catch(() => null);
-          if (res.ok) setAgents(json.agents ?? []);
+          if (!res.ok) return setMessage(json?.error?.message ?? 'Could not load agents.');
+          setAgents(json.agents ?? []);
         })
         .catch(() => setMessage('Could not load agents.'));
     }, 0);
@@ -121,7 +122,8 @@ export function ApprovalsView() {
   async function load() {
     const res = await fetch('/api/approvals', {cache: 'no-store'});
     const json = await res.json().catch(() => null);
-    if (res.ok) setRows(json.approvals ?? []);
+    if (!res.ok) setMessage(json?.error?.message ?? 'Could not load approvals.');
+    else setRows(json.approvals ?? []);
   }
   useEffect(() => {
     const timer = setTimeout(() => void load(), 0);
@@ -164,7 +166,8 @@ export function CalendarView() {
     const timer = setTimeout(() => {
       void fetch('/api/calendar', {cache: 'no-store'}).then(async (res) => {
         const json = await res.json().catch(() => null);
-        if (res.ok) setBody(json);
+        if (!res.ok) return setBody({health: {message: json?.error?.message ?? 'Could not load calendar.'}});
+        setBody(json);
       });
     }, 0);
     return () => clearTimeout(timer);
@@ -193,6 +196,7 @@ export function MemoryView() {
     const res = await fetch('/api/memory', {cache: 'no-store'});
     const json = await res.json().catch(() => null);
     if (res.ok) setRows(json.memories ?? []);
+    else setMessage(json?.error?.message ?? 'Could not load notes.');
   }
   useEffect(() => {
     const timer = setTimeout(() => void load(), 0);

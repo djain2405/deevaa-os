@@ -1,3 +1,7 @@
+'use client';
+
+import {usePathname} from 'next/navigation';
+
 const LINKS = [
   ['/', 'Today'],
   ['/chat', 'Chat'],
@@ -11,10 +15,11 @@ const LINKS = [
 ] as const;
 
 export function OsNav() {
+  const path = usePathname();
   return (
     <nav className="os-nav" aria-label="Deevaa">
       {LINKS.map(([href, label]) => (
-        <a key={href} href={href}>
+        <a key={href} href={href} aria-current={path === href || (href === '/' && path === '/today') ? 'page' : undefined}>
           {label}
         </a>
       ))}

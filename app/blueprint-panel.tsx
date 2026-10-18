@@ -175,7 +175,7 @@ export function BlueprintPanel({onSaved}: {onSaved?: () => void}) {
       </section>
     );
   }
-  const filled = BLUEPRINT_FIELDS.filter((f) => view.data[f.key].length).length;
+  const filled = BLUEPRINT_FIELDS.filter((f) => (view.data[f.key] ?? []).length).length;
   const pv = importPreview?.preview;
 
   return (
@@ -201,11 +201,11 @@ export function BlueprintPanel({onSaved}: {onSaved?: () => void}) {
             <button type="button" className="small-btn" onClick={() => setEditing(true)}>Edit Blueprint</button>
           </div>
           <ul className="plain blueprint-sections">
-            {BLUEPRINT_FIELDS.filter((f) => view.data[f.key].length).map((f) => (
+            {BLUEPRINT_FIELDS.filter((f) => (view.data[f.key] ?? []).length).map((f) => (
               <li key={f.key} className="blueprint-section">
                 <h3 className="blueprint-section-title">{f.label}</h3>
                 <ul className="blueprint-lines">
-                  {view.data[f.key].map((line) => (
+                  {(view.data[f.key] ?? []).map((line) => (
                     <li key={line}>{line}</li>
                   ))}
                 </ul>
@@ -268,11 +268,11 @@ export function BlueprintPanel({onSaved}: {onSaved?: () => void}) {
           <details open>
             <summary>Blueprint changes by section</summary>
             <ul className="plain notes">
-              {BLUEPRINT_FIELDS.filter((f) => pv.blueprint[f.key].length).map((f) => (
+              {BLUEPRINT_FIELDS.filter((f) => (pv.blueprint[f.key] ?? []).length).map((f) => (
                 <li key={f.key}>
                   <strong>{f.label}</strong>
                   <ul>
-                    {pv.blueprint[f.key].map((line) => (
+                    {(pv.blueprint[f.key] ?? []).map((line) => (
                       <li key={line}>{line}</li>
                     ))}
                   </ul>

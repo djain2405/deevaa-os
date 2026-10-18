@@ -52,7 +52,7 @@ function ItemRow({item}: {item: ItemResult}) {
             item.title
           )}
         </strong>
-        {item.changes.length > 0 && <small>{item.changes.join(' · ')}</small>}
+        {(item.changes ?? []).length > 0 && <small>{(item.changes ?? []).join(' · ')}</small>}
         {item.detail && <small>{item.detail}</small>}
         {item.candidates && (
           <small>
@@ -72,7 +72,8 @@ function ItemRow({item}: {item: ItemResult}) {
   );
 }
 
-export function ChatPanel({writes, onChanged}: {writes: 'granted' | 'off' | null; onChanged?: () => void}) {
+export function ChatPanel({writes, onChanged}: {writes?: 'granted' | 'off' | null; onChanged?: () => void}) {
+  const [writeState, setWriteState] = useState<'granted' | 'off' | null>(writes ?? null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -85,7 +86,8 @@ export function ChatPanel({writes, onChanged}: {writes: 'granted' | 'off' | null
     if (res.status === 401) return void (window.location.href = '/login');
     const body = await res.json().catch(() => null);
     if (!res.ok) return setError(body?.error?.message ?? 'Could not load the conversation.');
-    setMessages(body.messages);
+    setMessages(Array.isArray(body.messages) ? body.messages : []);
+    if (body.notionWrites === 'granted' || body.notionWrites === 'off') setWriteState(body.notionWrites);
   }, []);
 
   useEffect(() => {
@@ -153,7 +155,7 @@ export function ChatPanel({writes, onChanged}: {writes: 'granted' | 'off' | null
       </div>
       <p className="muted">
         Write naturally. Deevaa pulls out tasks, deadlines and status changes, checks Notion for matching tasks, and{' '}
-        {writes === 'granted' ? 'updates Deevaa Tasks, then shows exactly what changed.' : 'shows the changes it would make. Turn on Notion updates in Connections to apply them.'}
+        {writeState === 'granted' ? 'updates Deevaa Tasks, then shows exactly what changed.' : 'shows the changes it would make. Turn on Notion updates in Connections to apply them.'}
       </p>
       <ol className="chat-log" ref={listRef} aria-live="polite">
         {messages.map((m) =>
@@ -165,28 +167,28 @@ export function ChatPanel({writes, onChanged}: {writes: 'granted' | 'off' | null
           ) : (
             <li key={m.id} className="msg msg-deevaa">
               <p>{m.content}</p>
-              {m.result && m.result.items.length > 0 && <ul className="plain">{m.result.items.map((it, i) => <ItemRow key={it.opId ?? i} item={it} />)}</ul>}
-              {m.result && m.result.notes.length > 0 && (
+              {m.result && (m.result.items ?? []).length > 0 && <ul className="plain">{(m.result.items ?? []).map((it, i) => <ItemRow key={it.opId ?? i} item={it} />)}</ul>}
+              {m.result && (m.result.notes ?? []).length > 0 && (
                 <ul className="plain notes">
-                  {m.result.notes.map((n) => (
+                  {(m.result.notes ?? []).map((n) => (
                     <li key={n.id}>
                       <span className="badge badge-pending">{NOTE_LABEL[n.kind] ?? n.kind}</span> {n.text}
                     </li>
                   ))}
                 </ul>
               )}
-              {m.result?.clarifications.map((c, i) => (
+              {(m.result?.clarifications ?? []).map((c, i) => (
                 <p key={i} className="clarify">{c}</p>
               ))}
               {m.result?.extractorNote && <small className="muted">{m.result.extractorNote}</small>}
               {m.result && (
                 <div className="row-actions">
-                  {writes === 'granted' && m.result.items.some((i) => i.action === 'proposed' || (i.action === 'failed' && i.opId)) && (
+                  {writeState === 'granted' && m.result.items.some((i) => i.action === 'proposed' || (i.action === 'failed' && i.opId)) && (
                     <button type="button" className="small-btn" disabled={busyId === m.result.messageId} onClick={() => act('apply', m.result!.messageId)}>
                       Apply to Notion
                     </button>
                   )}
-                  {writes === 'granted' && m.result.items.some((i) => (i.action === 'created' || i.action === 'updated') && i.opId) && (
+                  {writeState === 'granted' && m.result.items.some((i) => (i.action === 'created' || i.action === 'updated') && i.opId) && (
                     <button type="button" className="ghost small-btn" disabled={busyId === m.result.messageId} onClick={() => act('undo', m.result!.messageId)}>
                       Undo these changes
                     </button>
