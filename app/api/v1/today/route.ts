@@ -17,6 +17,15 @@ export async function GET() {
     date,
     summary: snapshot?.summary ?? null,
     topOutcomes: (snapshot?.topOutcomes ?? []).map((item) => item.task.title),
-    blocks: (snapshot?.blocks ?? []).map((block) => ({label: block.label, role: block.role ?? null, state: block.state}))
+    blocks: (snapshot?.blocks ?? []).map((block) => ({
+      label: block.label,
+      role: block.role ?? null,
+      state: block.state,
+      nextAction: block.nextAction ?? null,
+      expectedOutcome: block.expectedOutcome ?? null,
+      provenance: block.provenance ?? null,
+      whyNow: block.whyNow ?? null,
+      emptyDetail: block.emptyDetail ?? null
+    }))
   });
 }

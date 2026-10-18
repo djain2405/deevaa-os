@@ -331,7 +331,9 @@ export const actionFeedback = pgTable('action_feedback', {
   id: uuid('id').primaryKey().defaultRandom(),
   userId: uuid('user_id').notNull().references(() => users.id, {onDelete: 'cascade'}),
   taskId: text('task_id').notNull(),
-  kind: text('kind').$type<'done' | 'not_now' | 'not_possible_here' | 'wrong'>().notNull(),
+  kind: text('kind').$type<
+    'done' | 'not_now' | 'not_possible_here' | 'wrong' | 'replace' | 'shrink' | 'skip' | 'complete' | 'not_relevant' | 'postpone' | 'explain'
+  >().notNull(),
   minutes: integer('minutes'),
   energy: text('energy'),
   context: text('context'),

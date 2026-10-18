@@ -105,6 +105,8 @@ export type RadarItem = {
   detail: string;
 };
 
+export type BlockProvenance = 'explicit' | 'derived' | 'suggested';
+
 export type Block = {
   label: BlockLabel;
   role?: BlockRole;
@@ -114,6 +116,24 @@ export type Block = {
   end: string | null;
   reason: string;
   aiNote?: string;
+  nextAction?: string | null;
+  expectedOutcome?: string | null;
+  provenance?: BlockProvenance | null;
+  whyNow?: string | null;
+  emptyDetail?: string | null;
+  candidateId?: string | null;
+};
+
+export type PlanTrace = {
+  plannerVersion: 1 | 2;
+  readyCount: number;
+  candidateCountBySource: Record<string, number>;
+  candidateCountByBlock: Record<string, number>;
+  rejections: Record<string, number>;
+  selected: {label: BlockLabel; candidateId: string | null}[];
+  validationPasses: number;
+  generationPasses: number;
+  sourceFreshness: Record<string, string | null>;
 };
 
 export type RankedTask = TaskRef & {
@@ -158,7 +178,7 @@ export type EmailDigest = {
 export type BriefingSnapshot = {
   version: typeof BRIEFING_VERSION;
   date: string;
-  timezone: typeof TIMEZONE;
+  timezone: string;
   generatedAt: string;
   status: 'complete' | 'partial' | 'unavailable';
   summary: string;
@@ -178,4 +198,6 @@ export type BriefingSnapshot = {
   agentWork?: AgentDeliverable[];
   /** Morning Gmail digest. Absent on snapshots stored before it existed. */
   emailDigest?: EmailDigest;
+  plannerVersion?: 1 | 2;
+  planTrace?: PlanTrace;
 };

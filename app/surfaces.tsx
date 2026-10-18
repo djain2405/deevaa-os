@@ -3,7 +3,12 @@
 import {useEffect, useState} from 'react';
 
 export function TodayView() {
-  const [body, setBody] = useState<{date?: string; summary?: string | null; topOutcomes?: string[]; blocks?: {label: string; role: string | null; state: string}[]} | null>(null);
+  const [body, setBody] = useState<{
+    date?: string;
+    summary?: string | null;
+    topOutcomes?: string[];
+    blocks?: {label: string; role: string | null; state: string; nextAction?: string | null; emptyDetail?: string | null}[];
+  } | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -34,6 +39,8 @@ export function TodayView() {
             {(body.blocks ?? []).map((block) => (
               <li key={block.label}>
                 {block.label} · {block.role ?? 'unmapped'} · {block.state}
+                {block.nextAction ? ` · ${block.nextAction}` : ''}
+                {block.emptyDetail && block.state === 'omitted' ? ` · ${block.emptyDetail}` : ''}
               </li>
             ))}
           </ul>

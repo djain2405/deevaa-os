@@ -1,6 +1,6 @@
 # Deevaa OS implementation tracker
 
-Evidence for this pass: `npm test` (187 tests), `npx tsc --noEmit`, `npx eslint .`, `npm run env:check`, and `npm run smoke` on October 17, 2026. Gmail digest idempotency in `tests/jobs.test.ts` still passes.
+Evidence for this pass: `npm test` (planner V2 plus existing Gmail 7am / jobs / planner V1 contracts), `npx tsc --noEmit`, `npx eslint .`. Gmail digest idempotency in `tests/jobs.test.ts` still passes.
 
 Live Google, Notion, and GitHub calls are not part of that evidence. Those stay listed as blockers.
 
@@ -79,6 +79,10 @@ Tasks: the new tests cover injection, duplicate job collapse, approval replay, p
 ### 18
 
 Tasks: proposed blocks live in `calendar_blocks` and do not call Google. `/api/v1/today` reads the stored briefing. Heartbeats record a worker id. A Mac mini or local model was not purchased.
+
+### Planner V2
+
+Tasks: context snapshot, candidate pipeline, per-lens compose, planTrace, block feedback (`replace` / `shrink` / `skip` / `complete` / `not_relevant` / `postpone` / `explain`). Evidence: `tests/planner-v2.test.ts`, `tests/planner.test.ts`, `tests/gmail.test.ts`, `tests/jobs.test.ts`. Suggested candidates do not write Notion. `gmail.morning` merge-without-replan is unchanged.
 
 ## Known issues
 

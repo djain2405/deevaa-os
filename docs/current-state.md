@@ -1,6 +1,6 @@
 # Deevaa OS current state
 
-Updated October 17, 2026. This describes the repository after the blueprint implementation pass. It is not a claim that a live Google or Notion account was exercised in this session.
+Updated October 17, 2026. This describes the repository after Four-Block Planner V2. It is not a claim that a live Google or Notion account was exercised in this session.
 
 ## Stack
 
@@ -16,7 +16,7 @@ Updated October 17, 2026. This describes the repository after the blueprint impl
 - Notion as the human task store, with verified writes, undo, and `notion_task_write`
 - Read-only Google Calendar and Gmail
 - `gmail.morning` at 07:00 America/Los_Angeles via `GET /api/jobs` (Railway `*/15`)
-- Chat intake, Life Blueprint versions, four-block planner, deadline radar
+- Chat intake, Life Blueprint versions, four-block planner V2, deadline radar
 - Idempotency keys `agent:{id}:{user}:{localDate}` and `cron:{user}:{date}`
 
 n8n is not a second scheduler. A future n8n workflow may call the same bearer-protected `/api/jobs` route.
@@ -47,6 +47,10 @@ n8n is not a second scheduler. A future n8n workflow may call the same bearer-pr
 | `/api/projects`, `/api/calendar` | session | Notion projection and calendar proposals |
 | `/api/v1/today` | session | Mobile-shaped briefing read |
 | `/api/workers/heartbeat` | session | Cloud or local worker heartbeat |
+
+## Planner V2
+
+`buildBriefing` composes FOCUS / CLOSE / MAINTAIN / EXPAND from a context snapshot (Notion, calendar, Blueprint routines, confirmed intake, digest ids, pending approvals, feedback). Suggested candidates never write Notion. Waiting work is follow-up Close only when stale, and its Notion id never lands on a block. Gmail morning still only merges a digest; it does not replan. See `docs/planner-v2-snapshots.md`.
 
 ## Gmail 7:00 behavior
 

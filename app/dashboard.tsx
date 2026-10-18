@@ -118,32 +118,65 @@ function BlockRow({
   completingId,
   celebrateId,
   hiddenTaskIds,
-  onDone
+  explained,
+  onDone,
+  onFeedback
 }: {
   block: Block;
   completingId: string | null;
   celebrateId: string | null;
   hiddenTaskIds: Set<string>;
+  explained: boolean;
   onDone: (id: string) => void;
+  onFeedback: (id: string, kind: FeedbackKind, block: Block) => void;
 }) {
   const when = block.state === 'scheduled' && block.start && block.end ? `${time(block.start)} – ${time(block.end)}` : block.state === 'omitted' ? 'Skipped' : 'No time claimed';
   const task = block.task;
+  const feedbackId = block.candidateId || task?.id || `block:${block.label}`;
   if (task && hiddenTaskIds.has(task.id)) return null;
+  const title = block.nextAction || (task ? task.title : block.state === 'omitted' ? 'Nothing scheduled' : 'Open time, no task assigned');
   return (
     <li className={`block block-${block.state}${task && celebrateId === task.id ? ' done-celebrate' : ''}`}>
       <span className="block-label">{block.label}</span>
       <div>
         <p className="block-when">{when}</p>
-        <strong>{task ? task.title : block.label === 'EXPAND' && block.state !== 'omitted' ? 'Open time, no task assigned' : 'Nothing scheduled'}</strong>
-        <p>{block.reason}</p>
+        <strong>{title}</strong>
+        {block.expectedOutcome && <p className="muted">Done when: {block.expectedOutcome}</p>}
+        <p>{block.state === 'omitted' ? block.emptyDetail || block.reason : block.reason}</p>
+        {explained && (block.whyNow || block.reason) && <p className="muted">{block.whyNow || block.reason}</p>}
+        {block.provenance && (
+          <p className={`prov prov-${block.provenance}`}>
+            {block.provenance === 'suggested' ? 'Suggested — not a commitment' : block.provenance === 'derived' ? 'Derived from your context' : 'From Notion or an approval'}
+          </p>
+        )}
         {block.aiNote && <p className="ai-note"><span>AI note:</span> {block.aiNote}</p>}
         {task && <TaskLinks task={task} />}
-        {task && (
-          <div className="feedback" role="group" aria-label={`Mark ${task.title} done`}>
-            <DoneButton taskId={task.id} completingId={completingId} onDone={onDone} />
-            <DoneToast taskId={task.id} celebrateId={celebrateId} />
-          </div>
-        )}
+        <div className="feedback" role="group" aria-label={`Actions for ${block.label}`}>
+          {task && <DoneButton taskId={task.id} completingId={completingId} onDone={onDone} />}
+          <button type="button" className="ghost" onClick={() => onFeedback(feedbackId, 'explain', block)}>
+            Why
+          </button>
+          {block.state !== 'omitted' && (
+            <>
+              <button type="button" className="ghost" onClick={() => onFeedback(feedbackId, 'replace', block)}>
+                Replace
+              </button>
+              <button type="button" className="ghost" onClick={() => onFeedback(feedbackId, 'shrink', block)}>
+                Shrink
+              </button>
+              <button type="button" className="ghost" onClick={() => onFeedback(feedbackId, 'skip', block)}>
+                Skip
+              </button>
+              <button type="button" className="ghost" onClick={() => onFeedback(feedbackId, 'postpone', block)}>
+                Postpone
+              </button>
+              <button type="button" className="ghost" onClick={() => onFeedback(feedbackId, 'not_relevant', block)}>
+                Not relevant
+              </button>
+            </>
+          )}
+          {task && <DoneToast taskId={task.id} celebrateId={celebrateId} />}
+        </div>
       </div>
     </li>
   );
@@ -164,6 +197,7 @@ export default function Dashboard() {
   const [skipped, setSkipped] = useState<string[]>([]);
   const [topSkipped, setTopSkipped] = useState<string[]>([]);
   const [whyOpen, setWhyOpen] = useState<string | null>(null);
+  const [blockWhy, setBlockWhy] = useState<string | null>(null);
   const [writes, setWrites] = useState<'granted' | 'off' | null>(null);
   const [completingId, setCompletingId] = useState<string | null>(null);
   const [completedIds, setCompletedIds] = useState<string[]>([]);
@@ -329,16 +363,17 @@ export default function Dashboard() {
     }
   }
 
-  async function sendFeedback(taskId: string, kind: FeedbackKind) {
-    if (kind === 'done') return markTaskDone(taskId);
+  async function sendFeedback(taskId: string, kind: FeedbackKind, block?: Block) {
+    if (kind === 'done' || kind === 'complete') return markTaskDone(taskId);
     const res = await fetch('/api/feedback', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({taskId, kind, minutes, energy, context})
+      body: JSON.stringify({taskId, kind, minutes, energy, context, block: block?.label ?? null, candidateId: block?.candidateId ?? null})
     });
     const body = await res.json().catch(() => null);
     if (!res.ok) return setError(body?.error?.message ?? 'Feedback could not be saved.');
     setNotice(body.message);
+    if (kind === 'explain') setBlockWhy(block?.label ?? taskId);
     const local: Feedback = {taskId, kind, context, createdAt: new Date().toISOString()};
     const next = await load();
     choose(skipped, [...(next?.feedback ?? data?.feedback ?? []), local], next?.briefing?.tasks ?? data?.briefing?.tasks);
@@ -578,7 +613,9 @@ export default function Dashboard() {
                     completingId={completingId}
                     celebrateId={celebrateId}
                     hiddenTaskIds={hiddenTaskIds}
+                    explained={blockWhy === x.label || blockWhy === x.candidateId}
                     onDone={markTaskDone}
+                    onFeedback={sendFeedback}
                   />
                 ))}
               </ul>

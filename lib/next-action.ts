@@ -3,7 +3,19 @@ import type {Context, Energy, RankedTask} from './types';
 export const ACTION_WINDOWS = [5, 10, 20, 45] as const;
 export const ENERGY_LEVELS: Energy[] = ['Low', 'Medium', 'High'];
 export const CONTEXTS: Context[] = ['Anywhere', 'Phone', 'Laptop', 'Home'];
-export const FEEDBACK_KINDS = ['done', 'not_now', 'not_possible_here', 'wrong'] as const;
+export const FEEDBACK_KINDS = [
+  'done',
+  'not_now',
+  'not_possible_here',
+  'wrong',
+  'replace',
+  'shrink',
+  'skip',
+  'complete',
+  'not_relevant',
+  'postpone',
+  'explain'
+] as const;
 export type FeedbackKind = (typeof FEEDBACK_KINDS)[number];
 export type Feedback = {taskId: string; kind: FeedbackKind; context: string | null; createdAt: string};
 
@@ -24,10 +36,10 @@ function feedbackEffect(feedback: Feedback[], taskId: string, context: Context, 
   for (const f of feedback) {
     if (f.taskId !== taskId) continue;
     const age = now - Date.parse(f.createdAt);
-    if (f.kind === 'done' && age < 24 * HOUR) skip = 'you marked it done';
-    if (f.kind === 'not_now' && age < 3 * HOUR) skip = 'you said not now';
+    if ((f.kind === 'done' || f.kind === 'complete') && age < 24 * HOUR) skip = 'you marked it done';
+    if ((f.kind === 'not_now' || f.kind === 'skip' || f.kind === 'postpone') && age < 3 * HOUR) skip = 'you said not now';
     if (f.kind === 'not_possible_here' && age < 7 * 24 * HOUR && f.context === context) skip = `you said it is not possible on ${context.toLowerCase()}`;
-    if (f.kind === 'wrong' && age < 14 * 24 * HOUR) penalty += WRONG_PENALTY;
+    if ((f.kind === 'wrong' || f.kind === 'not_relevant') && age < 14 * 24 * HOUR) penalty += WRONG_PENALTY;
   }
   return {skip, penalty};
 }

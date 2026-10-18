@@ -7,7 +7,8 @@ import {getSessionUser} from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
 
-const TASK_ID = /^[0-9a-f-]{32,36}$|^[A-Za-z0-9_-]{1,64}$/i;
+const TASK_ID = /^[0-9a-f-]{32,36}$|^[A-Za-z0-9_.:-]{1,80}$/i;
+const BLOCKS = ['FOCUS', 'CLOSE', 'MAINTAIN', 'EXPAND'] as const;
 const DAILY_LIMIT = 200;
 
 export async function POST(req: Request) {
@@ -26,7 +27,9 @@ export async function POST(req: Request) {
     if ((await countFeedbackSince(user.id, new Date(Date.now() - 24 * 3600 * 1000))) >= DAILY_LIMIT) {
       return apiError(429, 'rate_limited', 'Too much feedback today. Try again tomorrow.');
     }
-    return privateJson(await recordFeedback(user.id, {taskId, kind, minutes, energy, context}));
+    const block = BLOCKS.includes(body?.block as (typeof BLOCKS)[number]) ? (body!.block as (typeof BLOCKS)[number]) : null;
+    const candidateId = typeof body?.candidateId === 'string' && TASK_ID.test(body.candidateId) ? body.candidateId : null;
+    return privateJson(await recordFeedback(user.id, {taskId, kind, minutes, energy, context, block, candidateId}));
   } catch (e) {
     logEvent('error', 'api.feedback', {kind: e instanceof Error ? e.name : 'unknown'});
     return apiError(500, 'internal', 'Feedback could not be saved.');
