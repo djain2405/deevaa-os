@@ -139,22 +139,59 @@ function groupProjects(tasks: ProjectTask[]) {
 export function ProjectsView() {
   const [tasks, setTasks] = useState<ProjectTask[]>([]);
   const [note, setNote] = useState('');
+  const [health, setHealth] = useState('');
   const [loaded, setLoaded] = useState(false);
   const [filter, setFilter] = useState<ProjectFilter>('open');
+  const [completingId, setCompletingId] = useState<string | null>(null);
+  const [celebrateId, setCelebrateId] = useState<string | null>(null);
+  const [error, setError] = useState('');
+
+  async function load() {
+    const res = await fetch('/api/projects', {cache: 'no-store'});
+    const json = await res.json().catch(() => null);
+    if (res.status === 401) return void (window.location.href = '/login');
+    if (!res.ok) return setHealth(json?.error?.message ?? 'Could not load projects.');
+    setTasks(json.tasks ?? []);
+    setHealth(json.health?.state !== 'connected' ? json.health?.message ?? 'Notion is not connected.' : '');
+  }
+
   useEffect(() => {
     const timer = setTimeout(() => {
-      void fetch('/api/projects', {cache: 'no-store'})
-        .then(async (res) => {
-          const json = await res.json().catch(() => null);
-          if (!res.ok) return setNote(json?.error?.message ?? 'Could not load projects.');
-          setTasks(json.tasks ?? []);
-          if (json.health?.state !== 'connected') setNote(json.health?.message ?? 'Notion is not connected.');
-        })
-        .catch(() => setNote('Could not load projects.'))
+      void load()
+        .catch(() => setHealth('Could not load projects.'))
         .finally(() => setLoaded(true));
     }, 0);
     return () => clearTimeout(timer);
   }, []);
+
+  async function markDone(taskId: string) {
+    if (completingId) return;
+    setCompletingId(taskId);
+    setError('');
+    try {
+      const res = await fetch('/api/feedback', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({taskId, kind: 'done'})
+      });
+      const body = await res.json().catch(() => null);
+      if (res.status === 401) return void (window.location.href = '/login');
+      const ok = body?.notion === 'marked_done' || body?.notion === 'already_done';
+      if (!res.ok || !ok) {
+        setError(body?.error?.message ?? body?.message ?? 'Could not mark that task Done.');
+        return;
+      }
+      setTasks((prev) =>
+        prev.map((task) => (task.id === taskId ? {...task, canonical: 'done', notionStatus: 'Done', nextAction: 'You marked this done in Deevaa'} : task))
+      );
+      setCelebrateId(taskId);
+      await load();
+      setNote(body.message ?? 'Marked Done in Notion.');
+    } finally {
+      setCompletingId(null);
+    }
+  }
+
   const visible = tasks.filter((task) => projectFilterMatch(task, filter));
   const groups = groupProjects(visible);
   const openCount = tasks.filter((task) => projectFilterMatch(task, 'open')).length;
@@ -164,8 +201,10 @@ export function ProjectsView() {
         <h2 id="projects-title">Projects</h2>
         {loaded && <span className="muted small">{openCount} open</span>}
       </div>
-      <p className="muted">From Notion. Done work stays in Notion; this list starts with what is still open.</p>
-      {note && <p className="muted">{note}</p>}
+      <p className="muted">From Notion. Mark a task Done here to update Notion, or open it there to edit more.</p>
+      {error && <p className="warning" role="alert">{error}</p>}
+      {note && <p className="notice">{note}</p>}
+      {health && <p className="muted">{health}</p>}
       <fieldset className="windows">
         <legend className="small muted">Show</legend>
         {PROJECT_FILTERS.map((item) => (
@@ -174,7 +213,7 @@ export function ProjectsView() {
           </button>
         ))}
       </fieldset>
-      {!loaded && !note && <p className="muted">Loading tasks…</p>}
+      {!loaded && !health && <p className="muted">Loading tasks…</p>}
       {loaded && !groups.length && <p className="muted">{filter === 'open' ? 'Nothing is open.' : 'No tasks in this view.'}</p>}
       {groups.map((group) => (
         <section key={group.name} className="project-group" aria-label={group.name}>
@@ -182,22 +221,38 @@ export function ProjectsView() {
             {group.name} <span className="muted small">{group.items.length}</span>
           </h3>
           <ul className="plain">
-            {group.items.map((task) => (
-              <li key={task.id} className="task">
-                <div>
-                  <span className={`badge lane-badge badge-${CANONICAL_BADGE[task.canonical] ?? 'not_connected'}`}>{CANONICAL_LABEL[task.canonical] ?? task.notionStatus}</span>
-                  <strong>{task.title}</strong>
-                  <small>
-                    {[formatDue(task.due) ? `Due ${formatDue(task.due)}` : null, task.nextAction].filter(Boolean).join(' · ') || task.notionStatus}
-                  </small>
-                </div>
-                {task.url && (
-                  <a href={task.url} target="_blank" rel="noreferrer">
-                    Open in Notion<span className="visually-hidden">: {task.title} (opens in new tab)</span>
-                  </a>
-                )}
-              </li>
-            ))}
+            {group.items.map((task) => {
+              const canComplete = task.canonical !== 'done' && task.canonical !== 'canceled';
+              const busy = completingId === task.id;
+              return (
+                <li key={task.id} className={`task${celebrateId === task.id ? ' done-celebrate' : ''}`}>
+                  <div>
+                    <span className={`badge lane-badge badge-${CANONICAL_BADGE[task.canonical] ?? 'not_connected'}`}>{CANONICAL_LABEL[task.canonical] ?? task.notionStatus}</span>
+                    <strong>{task.title}</strong>
+                    <small>
+                      {[formatDue(task.due) ? `Due ${formatDue(task.due)}` : null, task.nextAction].filter(Boolean).join(' · ') || task.notionStatus}
+                    </small>
+                    {celebrateId === task.id && (
+                      <p className="done-toast" role="status">
+                        Done — nice work.
+                      </p>
+                    )}
+                    <div className="feedback" role="group" aria-label={`Actions for ${task.title}`}>
+                      {canComplete && (
+                        <button type="button" className="done-btn" onClick={() => markDone(task.id)} disabled={!!completingId} aria-busy={busy}>
+                          {busy ? 'Marking…' : 'Done'}
+                        </button>
+                      )}
+                      {task.url && (
+                        <a href={task.url} target="_blank" rel="noreferrer">
+                          Open in Notion<span className="visually-hidden">: {task.title} (opens in new tab)</span>
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         </section>
       ))}
