@@ -52,12 +52,13 @@ function msg(id: string, fields: {subject: string; from?: string; snippet?: stri
   };
 }
 
-function gmailRaw(id: string, fields: {subject: string; from?: string; snippet?: string; body?: string; labelIds?: string[]}) {
+function gmailRaw(id: string, fields: {subject: string; from?: string; snippet?: string; body?: string; labelIds?: string[]; internalDate?: number}) {
   return {
     id,
     threadId: id,
     snippet: fields.snippet ?? fields.body ?? '',
     labelIds: fields.labelIds ?? ['INBOX'],
+    internalDate: fields.internalDate,
     payload: {
       mimeType: 'text/plain',
       headers: [
@@ -121,6 +122,27 @@ describe('grounded extraction', () => {
     expect(out.actions[0].due).toBe('2026-10-16');
     expect(out.actions[1].due).toBe('2026-10-20');
     expect(out.summaries).toEqual([]);
+  });
+
+  it('keeps every matching message with no digest size cap', () => {
+    const many = Array.from({length: 15}, (_, i) =>
+      msg(`inv-${i}`, {subject: `Invoice ${i} due tomorrow`, snippet: `Please pay invoice ${i} due tomorrow.`})
+    );
+    const out = extractWithRules(many, now);
+    expect(out.actions).toHaveLength(15);
+  });
+
+  it('keeps flight reminders even without due/expire language', () => {
+    const out = extractWithRules(
+      [
+        msg('soon', {subject: 'Your flight is soon', snippet: 'Check in opens shortly. Your flight is soon.'}),
+        msg('dated', {subject: 'Itinerary: SFO to JFK', snippet: 'Your flight departs Friday at 8:00 AM.'})
+      ],
+      now
+    );
+    expect(out.summaries.map((s) => s.subject)).toEqual(['Your flight is soon']);
+    expect(out.actions.map((a) => a.title)).toEqual(['Itinerary: SFO to JFK']);
+    expect(out.actions[0].due).toBe('2026-10-16');
   });
 
   it('drops schema-invalid model output and ungrounded or invented deadlines', () => {
@@ -259,7 +281,42 @@ describe('Gmail OAuth and reads', () => {
     expect(messages.map((m) => m.id)).toEqual(['pay']);
     const list = calls.find((c) => c.url.includes('users/me/messages?'))!;
     expect(new URL(list.url).searchParams.get('q')).toBe(GMAIL_QUERY);
+    expect(new URL(list.url).searchParams.get('maxResults')).toBe('100');
     expect(calls.every((c) => c.init.method !== 'PATCH' && c.init.method !== 'PUT' && c.init.method !== 'DELETE')).toBe(true);
+  });
+
+  it('paginates all last-24h inbox mail with no message cap and drops older mail', async () => {
+    await storeGmailToken();
+    const {impl, calls} = mockFetch([
+      ['oauth2.googleapis.com/token', () => json({access_token: 'access-1', expires_in: 3600})],
+      ['messages/a', () => json(gmailRaw('a', {subject: 'Invoice due tomorrow', snippet: 'Please pay the invoice due tomorrow.', internalDate: Date.now()}))],
+      ['messages/b', () => json(gmailRaw('b', {subject: 'Visa interview confirmation', snippet: 'Your visa interview is booked downtown.', internalDate: Date.now()}))],
+      [
+        'messages/old',
+        () =>
+          json(
+            gmailRaw('old', {
+              subject: 'Invoice due tomorrow',
+              snippet: 'Please pay the invoice due tomorrow.',
+              internalDate: Date.now() - 48 * 60 * 60 * 1000
+            })
+          )
+      ],
+      [
+        'users/me/messages?',
+        (url) =>
+          url.searchParams.get('pageToken') === 'page-2'
+            ? json({messages: [{id: 'b'}, {id: 'old'}]})
+            : json({messages: [{id: 'a'}], nextPageToken: 'page-2'})
+      ]
+    ]);
+    const {messages, health} = await fetchGmailMessages(userId, {fetchImpl: impl, ...fast});
+    expect(messages.map((m) => m.id)).toEqual(['a', 'b']);
+    expect(health.warnings).toEqual([]);
+    expect(health.message).toMatch(/last 24 hours/);
+    const lists = calls.filter((c) => c.url.includes('users/me/messages?'));
+    expect(lists).toHaveLength(2);
+    expect(new URL(lists[1].url).searchParams.get('pageToken')).toBe('page-2');
   });
 
   it('marks a revoked refresh token and stops calling Google', async () => {

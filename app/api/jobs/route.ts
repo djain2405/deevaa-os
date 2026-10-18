@@ -4,7 +4,7 @@ import {apiError, bearerMatches, privateJson} from '@/lib/http';
 import {logEvent} from '@/lib/log';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 function statusOf(outcomes: string[]) {
   if (outcomes.includes('locked')) return 409;

@@ -8,7 +8,8 @@ export const GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
 export const GMAIL_PROVIDER = 'google_gmail';
 export const GMAIL_STATE_COOKIE = 'deevaa_gmail_nonce';
 export const GMAIL_QUERY = 'in:inbox newer_than:24h -category:promotions -category:social';
-export const MAX_MESSAGES = 40;
+export const LIST_PAGE_SIZE = 100;
+export const FETCH_BATCH = 10;
 export const SCAN_WINDOW_MS = 24 * 60 * 60 * 1000;
 const SKIP_LABELS = new Set(['CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL']);
 
@@ -191,17 +192,29 @@ function parseMessage(raw: {
 }
 
 async function listIds(accessToken: string, opts: FetchOptions) {
-  const q = new URLSearchParams({q: GMAIL_QUERY, maxResults: String(MAX_MESSAGES)});
-  const res = await providerFetch(
-    'gmail.messages.list',
-    `https://gmail.googleapis.com/gmail/v1/users/me/messages?${q}`,
-    {headers: {Authorization: `Bearer ${accessToken}`}},
-    opts
-  );
-  if (res.status === 401) throw new GmailError('revoked', 'Gmail access was revoked or expired. Reconnect Gmail.');
-  if (!res.ok) throw new GmailError('unavailable', 'Gmail could not be read.');
-  const body = await res.json();
-  return ((body.messages ?? []) as {id: string; threadId?: string}[]).slice(0, MAX_MESSAGES);
+  const ids: {id: string; threadId?: string}[] = [];
+  const seenTokens = new Set<string>();
+  let pageToken: string | undefined;
+  do {
+    const q = new URLSearchParams({q: GMAIL_QUERY, maxResults: String(LIST_PAGE_SIZE)});
+    if (pageToken) q.set('pageToken', pageToken);
+    const res = await providerFetch(
+      'gmail.messages.list',
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages?${q}`,
+      {headers: {Authorization: `Bearer ${accessToken}`}},
+      opts
+    );
+    if (res.status === 401) throw new GmailError('revoked', 'Gmail access was revoked or expired. Reconnect Gmail.');
+    if (!res.ok) throw new GmailError('unavailable', 'Gmail could not be read.');
+    const body = await res.json();
+    ids.push(...((body.messages ?? []) as {id: string; threadId?: string}[]));
+    pageToken = body.nextPageToken;
+    if (pageToken) {
+      if (seenTokens.has(pageToken)) break;
+      seenTokens.add(pageToken);
+    }
+  } while (pageToken);
+  return ids;
 }
 
 async function getMessage(accessToken: string, id: string, opts: FetchOptions) {
@@ -261,23 +274,35 @@ export async function fetchGmailMessages(
     const warnings: string[] = [];
     const messages: GmailMessage[] = [];
     let failed = 0;
-    for (const row of ids) {
-      try {
-        const parsed = parseMessage(await getMessage(access_token, row.id, opts));
-        if (parsed && (parsed.internalDate == null || parsed.internalDate >= Date.now() - SCAN_WINDOW_MS)) messages.push(parsed);
-      } catch (e) {
-        if (e instanceof GmailError && e.kind === 'revoked') throw e;
-        failed++;
+    for (let i = 0; i < ids.length; i += FETCH_BATCH) {
+      const chunk = ids.slice(i, i + FETCH_BATCH);
+      const results = await Promise.all(
+        chunk.map(async (row) => {
+          try {
+            return {ok: true as const, parsed: parseMessage(await getMessage(access_token, row.id, opts))};
+          } catch (e) {
+            if (e instanceof GmailError && e.kind === 'revoked') throw e;
+            return {ok: false as const};
+          }
+        })
+      );
+      for (const result of results) {
+        if (!result.ok) {
+          failed++;
+          continue;
+        }
+        if (result.parsed && (result.parsed.internalDate == null || result.parsed.internalDate >= Date.now() - SCAN_WINDOW_MS)) {
+          messages.push(result.parsed);
+        }
       }
     }
     if (ids.length && failed === ids.length) throw new GmailError('unavailable', 'Gmail could not be read.');
     if (failed) warnings.push('Some messages could not be read; the digest may be incomplete.');
-    if (ids.length === MAX_MESSAGES) warnings.push('Stopped after the 40 most recent messages from the last 24 hours.');
     return {
       messages,
       health: {
         state: 'connected',
-        message: `Read ${messages.length} inbox message(s) from the last day.`,
+        message: `Read ${messages.length} inbox message(s) from the last 24 hours.`,
         lastSyncedAt: new Date().toISOString(),
         count: messages.length,
         warnings

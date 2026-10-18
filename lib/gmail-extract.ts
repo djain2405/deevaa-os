@@ -13,6 +13,8 @@ export const DEADLINE_RE =
 export const ACTION_RE = DEADLINE_RE;
 export const MISS_RE =
   /\b(interview|offer letter|visa|contract|tax|irs|verif(?:y|ication)|security alert|password|two-factor|2fa|wire transfer|attorney|court date)\b/i;
+export const TRAVEL_RE =
+  /\b(flight|itinerary|boarding pass|check[- ]?in|gate change|departure|layover|your trip|travel reminder)\b/i;
 export const TRANSACTIONAL_RE =
   /\b(receipt|your (?:order|purchase|payment)|order confirmation|shipping (?:confirmation|update|notification)|has shipped|out for delivery|tracking number|package delivered|delivered to|thanks for your (?:purchase|payment|order)|thank you for your (?:purchase|payment|order)|payment (?:received|processed|confirmed)|we(?:'|’)ve received your (?:order|payment)|purchase confirmation)\b/i;
 const NOREPLY = /no-?reply|mailer-daemon|notifications@|newsletter|donotreply/i;
@@ -29,7 +31,7 @@ const ModelDigest = z.object({
         messageId: z.string().min(1)
       })
     )
-    .max(20),
+    .max(200),
   summaries: z
     .array(
       z.object({
@@ -38,7 +40,7 @@ const ModelDigest = z.object({
         messageId: z.string().min(1)
       })
     )
-    .max(20)
+    .max(200)
 });
 
 export function messageText(m: GmailMessage) {
@@ -70,9 +72,7 @@ export function isTransactional(text: string) {
   return TRANSACTIONAL_RE.test(text);
 }
 
-/** Future or today date next to remaining-work language. Past order/payment dates do not count. */
-export function remainingDeadline(text: string, now: Date): string | null {
-  if (!DEADLINE_RE.test(text)) return null;
+function firstUpcomingDate(text: string, now: Date): string | null {
   const today = DateTime.fromJSDate(now).setZone(TIMEZONE).toISODate()!;
   for (const match of findDates(text, now)) {
     const {due} = dueFrom(match);
@@ -82,12 +82,23 @@ export function remainingDeadline(text: string, now: Date): string | null {
   return null;
 }
 
+/** Future or today date next to remaining-work language. Past order/payment dates do not count. */
+export function remainingDeadline(text: string, now: Date): string | null {
+  if (!DEADLINE_RE.test(text)) return null;
+  return firstUpcomingDate(text, now);
+}
+
 export function classifyEmail(text: string, now: Date): {kind: 'action' | 'summary' | 'skip'; due: string | null} {
   const transactional = isTransactional(text);
   const due = remainingDeadline(text, now);
   const deadline = DEADLINE_RE.test(text);
+  const travel = TRAVEL_RE.test(text);
   if (transactional && !due) return {kind: 'skip', due: null};
   if (deadline) return {kind: 'action', due};
+  if (travel) {
+    const travelDue = firstUpcomingDate(text, now);
+    return travelDue ? {kind: 'action', due: travelDue} : {kind: 'summary', due: null};
+  }
   if (!transactional && MISS_RE.test(text)) return {kind: 'summary', due: null};
   return {kind: 'skip', due: null};
 }
@@ -108,7 +119,7 @@ export function extractWithRules(messages: GmailMessage[], now: Date): {actions:
         due: classified.due,
         why: classified.due ? `Remaining deadline ${classified.due} quoted from this message.` : 'Time-sensitive language in this message.',
         permalink,
-        evidence: quoteAround(text, DEADLINE_RE)
+        evidence: quoteAround(text, DEADLINE_RE.test(text) ? DEADLINE_RE : TRAVEL_RE)
       });
       continue;
     }
@@ -116,12 +127,12 @@ export function extractWithRules(messages: GmailMessage[], now: Date): {actions:
       summaries.push({
         subject: title,
         from: displayFrom(m.from),
-        why: 'Flagged as easy to miss (verification, offer, or similar).',
+        why: TRAVEL_RE.test(text) ? 'Travel or itinerary — easy to miss.' : 'Flagged as easy to miss (verification, offer, or similar).',
         permalink
       });
     }
   }
-  return {actions: actions.slice(0, 12), summaries: summaries.slice(0, 12)};
+  return {actions, summaries};
 }
 
 function byId(messages: GmailMessage[]) {
@@ -203,15 +214,15 @@ export function groundModelOutput(
       permalink: gmailPermalink(m.threadId)
     });
   }
-  return {actions: actions.slice(0, 12), summaries: summaries.slice(0, 12), dropped};
+  return {actions, summaries, dropped};
 }
 
 function mergeUnique(rules: {actions: EmailAction[]; summaries: EmailSummary[]}, model: {actions: EmailAction[]; summaries: EmailSummary[]}) {
   const actionKeys = new Set(rules.actions.map((a) => a.permalink));
   const summaryKeys = new Set(rules.summaries.map((s) => s.permalink));
   return {
-    actions: [...rules.actions, ...model.actions.filter((a) => !actionKeys.has(a.permalink))].slice(0, 12),
-    summaries: [...rules.summaries, ...model.summaries.filter((s) => !summaryKeys.has(s.permalink))].slice(0, 12)
+    actions: [...rules.actions, ...model.actions.filter((a) => !actionKeys.has(a.permalink))],
+    summaries: [...rules.summaries, ...model.summaries.filter((s) => !summaryKeys.has(s.permalink))]
   };
 }
 
@@ -222,6 +233,7 @@ const SYSTEM = [
   'Summary: why, evidence, messageId.',
   'evidence must be copied exactly from that message. Never invent dates. Ignore promotions, social mail, and newsletters.',
   'Ignore receipts, shipping confirmations, and thanks-for-your-payment mail unless a remaining future deadline is quoted.',
+  'Keep flight, itinerary, boarding, and check-in mail even without the word due.',
   'Do not suggest sending or replying. Do not mark anything done.'
 ].join('\n');
 

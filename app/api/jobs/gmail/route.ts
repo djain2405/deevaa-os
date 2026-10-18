@@ -9,7 +9,7 @@ import {localDate} from '@/lib/time';
 import {BRIEFING_VERSION} from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 const KEY = /^[A-Za-z0-9_-]{8,100}$/;
 const DAILY_LIMIT = 10;
